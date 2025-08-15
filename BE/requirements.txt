@@ -1,34 +1,46 @@
-# Core runtime
-python-dateutil>=2.9
-pytz>=2024.1
-tzlocal>=5.2
-PyYAML>=6.0.2
-requests>=2.32.3
-pandas>=2.2.2
-numpy>=1.26.4
-tqdm>=4.66.4
+# ───────────────────────────────────────────────────────────
+# Core runtime (pinned for reproducibility)
+pandas==2.2.2
+numpy==1.26.4
+requests==2.32.3
+tqdm==4.66.4
+python-dotenv==1.0.1
+PyYAML==6.0.2
+tzlocal==5.2
+python-dateutil==2.9.0.post0
+pytz==2024.1
 
-# Market data providers / adapters
-yfinance>=0.2.44
-feedparser>=6.0.11
+# Market data providers / scraping helpers
+yfinance==0.2.44
+beautifulsoup4==4.12.3
+lxml==5.2.2
 
-# Technical indicators (uses pandas + numpy)
-ta>=0.11.0
+# Technical indicators
+ta==0.11.0           # vectorized TA indicators (separate project from pandas-ta)
 
-# Optional LLM strategy wrapper (only used if OPENAI_API_KEY is set)
-openai>=1.40.0
+# Sentiment / feeds
+feedparser==6.0.11
 
-# CLI quality of life (colorized output)
-rich>=13.7.1
+# Optional LLM (only used if you enable strategy_llm.py)
+openai==1.40.2
 
-# Testing
-pytest>=8.2.0
-pytest-mock>=3.14.0
+# Optional: faster numeric ops (safe to omit if wheels aren’t available)
+scipy==1.13.1
 
-# If you’ll use TwelveData and/or CryptoCompare:
-# (Not required to import, but you’ll need API keys via env)
-# twelvedata – we call the REST API directly via requests, so no extra lib.
+# CLI quality of life
+rich==13.7.1
 
-# If you plan to export plots or notebooks later:
-# matplotlib>=3.9.0    # <- optional
-# jupyterlab>=4.2.0    # <- optional
+# Dev & tests (optional; comment out if you don’t want them)
+pytest==8.2.2
+pytest-mock==3.14.0
+
+# ───────────────────────────────────────────────────────────
+# Notes:
+# • TwelveData & CryptoCompare require API keys via env:
+#     TWELVEDATA_API_KEY, CRYPTOCOMPARE_API_KEY
+#   We call their REST endpoints via 'requests', so no extra libs needed.
+#
+# • If you plan to export plots or notebooks later, you can add:
+#   matplotlib==3.9.0
+#   jupyterlab==4.2.0
+# ───────────────────────────────────────────────────────────
