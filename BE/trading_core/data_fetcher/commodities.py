@@ -1,110 +1,53 @@
 # BE/trading_core/data_fetcher/commodities.py
 """
-Commodities (metals) – market‑aware fetcher.
+Metals & commodity exposure (market-aware)
 
-Universe
---------
-• Global front‑month futures (Yahoo symbols): GC=F, SI=F, HG=F, PL=F, PA=F, ALI=F
-• Optional *local* ETF proxies per exchange (e.g., LSE, HKEX, TSX, XETRA, ASX, SGX)
-  These are best‑effort liquid trackers users can actually trade on local venues.
+Discovery
+---------
+• If `symbols` are provided -> use them directly.
+• Else read market-specific proxies from BE/trading_core/data/markets.yml
+  under: markets.<MARKET_KEY>.proxies.commodities (e.g., local gold/silver ETFs).
+• Always append a compact global futures set (Yahoo: GC=F, SI=F, HG=F, PL=F, PA=F, ALI=F).
 
-Backends & Fallbacks
---------------------
-Primary path tries:
-  1) TwelveData (if API key present and prefer_twelvedata() is True)
-  2) Yahoo history (yfinance) for price & 15 closes (indicators-ready)
-  3) Yahoo Quote JSON (price/vol/day range only; no history)
-  4) Stooq CSV (price/vol/day range only; no history)
+Quotes/History
+--------------
+• For futures symbols (=F), prefer Yahoo adapter (robust for futures) with Stooq fallback.
+• For ETF proxies (no "=F"), prefer TwelveData (if API key set), then Yahoo, then Stooq.
+• When include_history=True, attach ~15 daily closes when the backend provides them.
 
-Inputs
-------
-include_history : bool
-    If True, attach 'price_history' (≥15 closes when available).
-market : Optional[str]
-    Exchange key (e.g., "LSE","HKEX","TSX","XETRA","ASX","SGX"). Enables local ETF proxies.
-region : Optional[str]
-    Advisory only; currently not required since futures are global.
-symbols : Optional[List[str]]
-    Manual override – use exactly these fetch symbols (Yahoo/TwelveData), skipping discovery.
-
-Output rows (per asset)
------------------------
+Output row shape
+----------------
 {
-  "asset": str,            # display symbol (same as 'symbol')
-  "symbol": str,           # fetch/display symbol (Yahoo/TwelveData)
-  "price": float,
-  "volume": int,
-  "day_range_pct": float,  # (high - low)/price * 100 when available, else 0
-  "price_history": List[float]  # only when include_history=True and available
+  "asset":  <symbol>,
+  "symbol": <symbol>,
+  "price":  float,
+  "volume": int (0 if not available),
+  "day_range_pct": float (0.0 if unavailable),
+  "price_history": [floats]  # only if include_history=True and available
 }
 
 Diagnostics
 -----------
-LAST_COMMODITIES_SOURCE : str
-FAILED_COMMODITIES_SOURCES : List[str]
-SKIPPED_COMMODITIES_SOURCES : List[str]
+LAST_COMMODITIES_SOURCE: str
+FAILED_COMMODITIES_SOURCES: List[str]
+SKIPPED_COMMODITIES_SOURCES: List[str]
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+import os
 
-from .adapters import yahoo, stooq, twelvedata
-from . import prefer_twelvedata
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None  # We'll handle absence gracefully.
 
-AssetRow = Dict[str, Any]
+from .adapters import yahoo as yq
+from .adapters import stooq as sq
+from .adapters import twelvedata as td
 
-# ────────────────────────────────────────────────────────────
-# Base universe: front‑month metals futures (universal Yahoo symbols)
-# ────────────────────────────────────────────────────────────
-_DEFAULT_METAL_FUTURES = [
-    "GC=F",  # Gold
-    "SI=F",  # Silver
-    "HG=F",  # Copper
-    "PL=F",  # Platinum
-    "PA=F",  # Palladium
-    "ALI=F", # Aluminum (LME)
-]
-
-# ────────────────────────────────────────────────────────────
-# Optional local ETF proxies by market (extend as needed)
-# These are *examples* of liquid trackers for users trading locally.
-# Add/adjust symbols as you validate availability in your environment.
-# ────────────────────────────────────────────────────────────
-_LOCAL_ETF_BY_MARKET = {
-    # London Stock Exchange
-    "LSE": [
-        "SGLN.L",  # iShares Physical Gold
-        "PHAG.L",  # WisdomTree Physical Silver
-    ],
-    # Hong Kong
-    "HKEX": [
-        "2840.HK", # SPDR Gold Shares (HK)
-        # "2828.HK"   # Example silver/China proxy – comment/uncomment if confirmed in your setup
-    ],
-    # Canada
-    "TSX": [
-        "CGL.TO",  # iShares Gold Bullion ETF
-        "SVR.TO",  # iShares Silver Bullion ETF
-    ],
-    # Germany (XETRA)
-    "XETRA": [
-        "8PSG.DE",  # Xtrackers IE Physical Gold (example; verify in your region)
-    ],
-    # Australia
-    "ASX": [
-        "GOLD.AX", # ETFS Physical Gold
-        "ETPMAG.AX", # ETFS Physical Silver (ticker may vary; keep best-effort)
-    ],
-    # Singapore
-    "SGX": [
-        # SGX ETF tickers for gold/silver are limited; leave empty by default.
-    ],
-    # Paris / Euronext (examples)
-    "EN_PA": [
-        # Add verified FR tickers if desired, e.g., "PAU.PA" for palladium proxy if liquid enough.
-    ],
-}
 
 # ────────────────────────────────────────────────────────────
 # Diagnostics
@@ -115,195 +58,264 @@ SKIPPED_COMMODITIES_SOURCES: List[str] = []
 
 
 # ────────────────────────────────────────────────────────────
+# Defaults
+# ────────────────────────────────────────────────────────────
+# Compact global metals futures (Yahoo)
+_GLOBAL_METALS_FUTURES: List[str] = [
+    "GC=F",   # Gold
+    "SI=F",   # Silver
+    "HG=F",   # Copper
+    "PL=F",   # Platinum
+    "PA=F",   # Palladium
+    "ALI=F",  # Aluminum (LME)
+]
+
+
+# ────────────────────────────────────────────────────────────
+# Config loader
+# ────────────────────────────────────────────────────────────
+def _load_markets_yaml() -> Dict[str, Any]:
+    """
+    Load BE/trading_core/data/markets.yml if available.
+    Returns {} if missing or YAML unavailable.
+    """
+    try:
+        here = Path(__file__).resolve()
+        markets_path = here.parents[2] / "data" / "markets.yml"
+        if not markets_path.exists() or yaml is None:
+            return {}
+        with markets_path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _proxies_for_market(market: Optional[str]) -> List[str]:
+    """
+    Read market-specific commodity proxies (e.g., local ETFs) from markets.yml:
+      markets.<MARKET_KEY>.proxies.commodities: [ "SGLN.L", "PHAG.L", ... ]
+    """
+    if not market:
+        return []
+    cfg = _load_markets_yaml()
+    # expected structure: { markets: { KEY: { proxies: { commodities: [...] } } } }
+    try:
+        mk = str(market).strip().upper()
+        markets = cfg.get("markets", {}) or {}
+        node = markets.get(mk, {}) or {}
+        proxies = ((node.get("proxies", {}) or {}).get("commodities", [])) or []
+        return [str(s).strip().upper() for s in proxies if s]
+    except Exception:
+        return []
+
+
+# ────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────
-def _compute_day_range_pct(price: Optional[float], high: Optional[float], low: Optional[float]) -> float:
-    if not price or price == 0 or high is None or low is None:
-        return 0.0
-    try:
-        return round(((float(high) - float(low)) / float(price)) * 100.0, 2)
-    except Exception:
-        return 0.0
-
-
-def _resolve_symbols(market: Optional[str], region: Optional[str], symbols: Optional[List[str]]) -> List[str]:
-    """
-    Decide which symbols to fetch:
-      - If symbols override is provided, use it as‑is.
-      - Else start with local ETF proxies (if market provided), then add global futures.
-    """
-    if symbols:
-        # caller specified exactly what to fetch
-        seen, out = set(), []
-        for s in symbols:
-            if s and s not in seen:
-                seen.add(s)
-                out.append(s)
-        return out
-
-    base: List[str] = []
-    if market and market in _LOCAL_ETF_BY_MARKET:
-        base.extend(_LOCAL_ETF_BY_MARKET[market])
-
-    # Always append global metals futures – reliable & universal
-    base.extend(_DEFAULT_METAL_FUTURES)
-
-    # Deduplicate preserving order
-    seen, out = set(), []
-    for s in base:
+def _dedup(seq: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for s in seq:
         if s and s not in seen:
             seen.add(s)
             out.append(s)
     return out
 
 
-def _append_row(results: List[AssetRow], symbol: str, price: float, volume: int,
-                day_range_pct: float, price_history: Optional[List[float]]) -> None:
-    row: AssetRow = {
-        "asset": symbol,
-        "symbol": symbol,
-        "price": float(price),
-        "volume": int(volume or 0),
-        "day_range_pct": float(day_range_pct or 0.0),
-    }
-    if price_history:
-        row["price_history"] = list(price_history)
-    results.append(row)
-
-
-# ────────────────────────────────────────────────────────────
-# Core fetch
-# ────────────────────────────────────────────────────────────
-def fetch_commodities_data(*,
-                           include_history: bool = False,
-                           market: Optional[str] = None,
-                           region: Optional[str] = None,
-                           symbols: Optional[List[str]] = None) -> List[AssetRow]:
+def _resolve_symbols(
+    *,
+    market: Optional[str],
+    region: Optional[str],  # region currently unused for commodities; reserved for future
+    symbols: Optional[List[str]],
+) -> List[str]:
     """
-    Fetch commodities universe (metals futures + optional local proxies) with robust fallbacks.
+    Universe resolution:
+      1) Explicit symbols if provided.
+      2) Market-specific proxies from markets.yml (if any).
+      3) Always append compact global metals futures.
+    """
+    if symbols:
+        base = [str(s).strip().upper() for s in symbols if s]
+    else:
+        base = _proxies_for_market(market)
+    base.extend(_GLOBAL_METALS_FUTURES)
+    return _dedup(base)
+
+
+def _build_row(sym: str, series: Dict[str, Any], include_history: bool) -> Dict[str, Any]:
+    price = series.get("close", series.get("price"))
+    high = series.get("high")
+    low = series.get("low")
+    vol = series.get("volume")
+
+    try:
+        price_f = float(price) if price is not None else 0.0
+    except Exception:
+        price_f = 0.0
+
+    try:
+        vol_i = int(vol) if vol is not None else 0
+    except Exception:
+        vol_i = 0
+
+    drp = 0.0
+    try:
+        if price_f and high is not None and low is not None and float(price_f) != 0.0:
+            drp = round(((float(high) - float(low)) / float(price_f)) * 100.0, 2)
+    except Exception:
+        drp = 0.0
+
+    row: Dict[str, Any] = {
+        "asset": sym,
+        "symbol": sym,
+        "price": price_f,
+        "volume": vol_i,
+        "day_range_pct": drp,
+    }
+    if include_history:
+        hist = series.get("history") or []
+        if hist:
+            row["price_history"] = hist
+    return row
+
+
+def _has_twelvedata_key() -> bool:
+    return bool(os.getenv("TWELVEDATA_API_KEY") or os.getenv("TWELVE_DATA_API_KEY"))
+
+
+def _fetch_one_symbol(sym: str, *, include_history: bool) -> Optional[Dict[str, Any]]:
+    """
+    For futures (=F): Yahoo → Stooq
+    For ETF proxies: TwelveData (if key) → Yahoo → Stooq
+    """
+    is_future = "=F" in sym or sym.startswith("^")
+
+    # FUTURES PATH: Yahoo first
+    if is_future:
+        ya = yq.get_history(sym, lookback_days=16, with_intraday=False)
+        if ya and ya.get("close") is not None:
+            return _build_row(sym, ya, include_history)
+        st = sq.get_quote(sym)
+        if st and st.get("close") is not None:
+            # Stooq path doesn't add history in our helper
+            return _build_row(sym, st, include_history=False)
+        return None
+
+    # ETF/PROXY PATH
+    # 1) TwelveData (if configured)
+    if _has_twelvedata_key():
+        tdq = td.get_quote(sym)
+        if tdq and tdq.get("close") is not None:
+            if include_history:
+                tdh = td.get_history(sym, interval="1day", outputsize=20)
+                if tdh:
+                    tdq["history"] = tdh
+            return _build_row(sym, tdq, include_history)
+
+    # 2) Yahoo
+    ya = yq.get_history(sym, lookback_days=16, with_intraday=False)
+    if ya and ya.get("close") is not None:
+        return _build_row(sym, ya, include_history)
+
+    # 3) Stooq
+    st = sq.get_quote(sym)
+    if st and st.get("close") is not None:
+        return _build_row(sym, st, include_history=False)
+
+    return None
+
+
+# ────────────────────────────────────────────────────────────
+# Public API
+# ────────────────────────────────────────────────────────────
+def fetch_commodities_data(
+    include_history: bool = False,
+    *,
+    market: Optional[str] = None,
+    region: Optional[str] = None,
+    symbols: Optional[List[str]] = None,
+    min_assets: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch market-aware commodities exposure (futures + optional local ETF proxies).
 
     Parameters
     ----------
     include_history : bool
-        If True, attempt to attach ≥15 closes for indicators (RSI/SMA).
+        If True, attach last ~15 daily closes when the backend returns them.
     market : Optional[str]
-        Market key (e.g., "LSE","HKEX","TSX","XETRA","ASX","SGX") – enables local ETF proxies.
+        Exchange key (e.g., "LSE", "HKEX") to look up local ETF proxies in markets.yml.
     region : Optional[str]
-        Advisory only; futures are global (kept for symmetry with other fetchers).
+        Reserved for future regional logic; currently unused in commodities.
     symbols : Optional[List[str]]
-        Manual override – fetch exactly these symbols.
+        Explicit override universe.
+    min_assets : int
+        Minimum rows required for a successful fetch.
 
     Returns
     -------
-    List[AssetRow]
+    List[dict]
+        Normalized rows suitable for indicator pipeline.
     """
     global LAST_COMMODITIES_SOURCE, FAILED_COMMODITIES_SOURCES, SKIPPED_COMMODITIES_SOURCES
     FAILED_COMMODITIES_SOURCES = []
     SKIPPED_COMMODITIES_SOURCES = []
     LAST_COMMODITIES_SOURCE = "None"
 
-    fetch_syms = _resolve_symbols(market, region, symbols)
-    results: List[AssetRow] = []
+    universe = _resolve_symbols(market=market, region=region, symbols=symbols)
+    rows: List[Dict[str, Any]] = []
 
-    use_td = prefer_twelvedata()
-    used_yahoo_hist = False
-    used_yahoo_quote = False
-    used_stooq = False
     used_td = False
+    used_yahoo = False
+    used_stooq = False
 
-    for sym in fetch_syms:
-        # 1) TwelveData (if available & preferred)
-        if use_td:
-            try:
-                q = twelvedata.fetch_quote(sym)
-                if q and q.price is not None:
-                    price = float(q.price)
-                    volume = int(q.volume or 0)
-                    # TwelveData quote may already expose high/low; if not, default to 0% range
-                    drp = _compute_day_range_pct(price, q.high, q.low)
-                    price_hist = None
-                    if include_history:
-                        series = twelvedata.fetch_history(sym, interval="1day", outputsize=16)
-                        if series:
-                            price_hist = [float(x.close) for x in series][-16:]  # ensure ≥15 closes
-                    _append_row(results, sym, price, volume, drp, price_hist)
-                    used_td = True
-                    LAST_COMMODITIES_SOURCE = "TwelveData"
-                    continue
-            except Exception as e:
-                FAILED_COMMODITIES_SOURCES.append(f"TwelveData:{sym} ({e})")
+    for sym in universe:
+        row = _fetch_one_symbol(sym, include_history=include_history)
+        if row:
+            rows.append(row)
+            # crude provider attribution:
+            if "=F" in sym or sym.startswith("^"):
+                # futures path: Yahoo if price_history exists or cached; else Stooq
+                if "price_history" in row:
+                    used_yahoo = True
+                else:
+                    used_stooq = True
+            else:
+                if _has_twelvedata_key():
+                    # If TD provided history/quote, our helper would have attached "history" when include_history
+                    # We can't perfectly attribute; assume TD used first if key present and row has history
+                    if "price_history" in row:
+                        used_td = True
+                    else:
+                        # Could still be Yahoo; mark both best-effort
+                        used_yahoo = True
+                else:
+                    # No TD key -> Yahoo or Stooq
+                    if "price_history" in row:
+                        used_yahoo = True
+                    else:
+                        used_stooq = True
 
-        # 2) Yahoo history (best for indicators)
-        try:
-            price, vol, drp, price_hist = yahoo.fetch_history_for_symbol(sym, period_days=16)
-            if price is not None:
-                _append_row(results, sym, price, int(vol or 0), float(drp or 0.0),
-                            price_hist if include_history else None)
-                used_yahoo_hist = True
-                if LAST_COMMODITIES_SOURCE == "None":
-                    LAST_COMMODITIES_SOURCE = "Yahoo Finance (history)"
-                continue
-        except Exception as e:
-            FAILED_COMMODITIES_SOURCES.append(f"Yahoo history:{sym} ({e})")
-
-        # 3) Yahoo Quote JSON
-        try:
-            qp = yahoo.fetch_yahoo_quote_json(sym)
-            if qp and qp.price is not None:
-                price = float(qp.price)
-                volume = int(qp.volume or 0)
-                drp = _compute_day_range_pct(price, qp.high, qp.low)
-                _append_row(results, sym, price, volume, drp, None)  # no history from this path
-                used_yahoo_quote = True
-                if LAST_COMMODITIES_SOURCE == "None":
-                    LAST_COMMODITIES_SOURCE = "Yahoo Finance (quote)"
-                continue
-        except Exception as e:
-            FAILED_COMMODITIES_SOURCES.append(f"Yahoo quote:{sym} ({e})")
-
-        # 4) Stooq CSV
-        try:
-            sp = stooq.fetch_stooq_quote(sym)
-            if sp and sp.price is not None:
-                price = float(sp.price)
-                volume = int(sp.volume or 0)
-                drp = _compute_day_range_pct(price, sp.high, sp.low)
-                _append_row(results, sym, price, volume, drp, None)  # no history from this path
-                used_stooq = True
-                if LAST_COMMODITIES_SOURCE == "None":
-                    LAST_COMMODITIES_SOURCE = "Stooq"
-                continue
-        except Exception as e:
-            FAILED_COMMODITIES_SOURCES.append(f"Stooq:{sym} ({e})")
-            # give up on this symbol; skip
-
-    # Diagnostics “skipped” reasoning
-    if used_td:
-        if used_yahoo_hist or used_yahoo_quote or used_stooq:
-            SKIPPED_COMMODITIES_SOURCES.append("Yahoo/Stooq (TwelveData preferred)")
+    if rows:
+        # Label the primary used source(s)
+        labels = []
+        if used_td:
+            labels.append("TwelveData")
+        if used_yahoo:
+            labels.append("Yahoo")
+        if used_stooq:
+            labels.append("Stooq")
+        LAST_COMMODITIES_SOURCE = " + ".join(labels) if labels else "Unknown"
     else:
-        # If we didn’t use TwelveData but it’s available, note it as skipped
-        if prefer_twelvedata():
-            SKIPPED_COMMODITIES_SOURCES.append("TwelveData (not used for some symbols)")
+        # Mark failures to help diagnostics
+        if _has_twelvedata_key():
+            FAILED_COMMODITIES_SOURCES.append("TwelveData")
+        FAILED_COMMODITIES_SOURCES.append("Yahoo")
+        FAILED_COMMODITIES_SOURCES.append("Stooq")
 
-        if used_yahoo_hist and (used_yahoo_quote or used_stooq):
-            SKIPPED_COMMODITIES_SOURCES.append("Fallbacks used for some symbols")
+    # If too few assets, treat as failure (upstream can decide to switch category/market)
+    if len(rows) < max(1, min_assets):
+        return []
 
-    # If absolutely nothing worked
-    if not results:
-        LAST_COMMODITIES_SOURCE = "None"
-        if not FAILED_COMMODITIES_SOURCES:
-            FAILED_COMMODITIES_SOURCES.append("No provider returned data")
-
-    # Deduplicate diagnostics
-    def _dedup(seq: List[str]) -> List[str]:
-        seen = set(); out: List[str] = []
-        for s in seq:
-            if s and s not in seen:
-                seen.add(s); out.append(s)
-        return out
-
-    FAILED_COMMODITIES_SOURCES[:] = _dedup(FAILED_COMMODITIES_SOURCES)
-    SKIPPED_COMMODITIES_SOURCES[:] = _dedup(SKIPPED_COMMODITIES_SOURCES)
-
-    return results
+    return rows
