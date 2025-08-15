@@ -1,75 +1,80 @@
+# BE/trading_core/data_fetcher/equities.py
 """
-equities.py
-───────────
-Equities discovery + quotes with global/regional awareness.
+Equities discovery + quotes (market/region aware) with layered fallbacks.
 
 Discovery order
-  1) Localized Yahoo Finance screeners for the selected market (if known)
-  2) US Yahoo Finance screeners (Most Active / Gainers / Losers)
-  3) Curated seed tickers from data/seeds.yml (per market), if discovery fails
-     or when `force_seeds=True`
+---------------
+1) Yahoo localized screeners (if market is known & supported by adapters.yahoo)
+2) Seeds from `trading_core/data/seeds.yml` (if available for that market)
+3) Yahoo US screeners (as last resort)
 
-Quote/history fallback chain (per symbol)
-  1) yfinance daily history (last close + last 15 closes for indicators)
-  2) TwelveData quote/history (if TWELVEDATA_API_KEY configured)
-  3) Yahoo Quote JSON (price/vol/day-range%)
-  4) Stooq CSV last quote (price/vol/day-range%)
+Quote/History order
+-------------------
+Preferred (if TWELVEDATA_API_KEY set):
+    TwelveData (quote+history) → Yahoo (history) → Yahoo Quote JSON → Stooq CSV
+Default:
+    Yahoo (history) → Yahoo Quote JSON → Stooq CSV
 
-Returns rows shaped like:
-  {
-    "asset": "<ticker>",         # same as 'symbol'
-    "symbol": "<ticker>",        # Yahoo-style exchange suffixes kept (e.g., RDSA.AS)
-    "price": 123.45,
-    "volume": 987654,
-    "day_range_pct": 2.31,       # (high - low) / price * 100
-    "price_history": [ ... ]     # optional; ~15 closes when available
-  }
+Public API
+----------
+fetch_equities_data(include_history: bool = False,
+                    market: Optional[str] = None,
+                    region: Optional[str] = None,
+                    symbols: Optional[List[str]] = None,
+                    max_universe: int = 60,
+                    min_assets: int = 8,
+                    force_seeds: bool = False) -> List[dict]
 
-Diagnostics (module globals; read by CLI):
-  - LAST_STOCK_SOURCE: "Yahoo Finance (regional: X)", "Yahoo Finance (US)", "Seeds (X)", or "None"
-  - FAILED_STOCK_SOURCES: [str,...]   # errors encountered
-  - SKIPPED_STOCK_SOURCES: [str,...]  # what we bypassed due to earlier success
+Diagnostics
+-----------
+LAST_EQUITIES_SOURCE: str
+FAILED_EQUITIES_SOURCES: List[str]
+SKIPPED_EQUITIES_SOURCES: List[str]
+
+Row schema
+----------
+{
+  "asset": "AAPL",          # display symbol
+  "symbol": "AAPL",         # same as asset (for now)
+  "price": 212.34,          # float
+  "volume": 123456789,      # int
+  "day_range_pct": 1.87,    # float, intraday (high-low)/price * 100 or close-based if provider supplies
+  "price_history": [...],   # optional, last 15 closes when include_history=True
+}
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-from pathlib import Path
+import os
 
-# provider adapters
-from .adapters import yahoo as yf_adp
-from .adapters import stooq as stq_adp
-from .adapters import twelvedata as td_adp
+# Adapters
+from .adapters import yahoo as yf_adapter
+from .adapters import stooq as stq_adapter
+from .adapters import twelvedata as td_adapter
 
-# shared IO loader for seeds.yml
+# Optional: we won't fail if these aren’t present; we’ll just skip them
 try:
-    # prefer our project utility if present
-    from ..utils.io import load_yaml
+    from ..utils.io import load_yaml_safe  # type: ignore
 except Exception:
-    # minimal local loader fallback
-    import yaml  # type: ignore
-
-    def load_yaml(p: str | Path) -> dict:
-        with open(p, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+    load_yaml_safe = None  # graceful fallback
 
 # ────────────────────────────────────────────────────────────
-# module diagnostics (kept compatible with your existing CLI)
+# Diagnostics (module-level)
 # ────────────────────────────────────────────────────────────
-LAST_STOCK_SOURCE: str = "None"
-FAILED_STOCK_SOURCES: List[str] = []
-SKIPPED_STOCK_SOURCES: List[str] = []
-
-# how many days we want for technical indicators (RSI-14 etc.)
-PRICE_HISTORY_DAYS = 14
-
-# cap to keep LLM/token usage reasonable; discovery may yield more
-MAX_UNIVERSE = 80
-
+LAST_EQUITIES_SOURCE: str = "None"
+FAILED_EQUITIES_SOURCES: List[str] = []
+SKIPPED_EQUITIES_SOURCES: List[str] = []
 
 # ────────────────────────────────────────────────────────────
-# helpers
+# Helpers
 # ────────────────────────────────────────────────────────────
+def _prefer_twelvedata() -> bool:
+    key = os.getenv("TWELVEDATA_API_KEY") or os.getenv("TWELVE_DATA_API_KEY")
+    force = (os.getenv("FORCE_TWELVEDATA", "").strip().lower() in {"1", "true", "yes"})
+    return bool(key) or force
+
+
 def _dedup(seq: List[str]) -> List[str]:
     seen = set()
     out: List[str] = []
@@ -80,321 +85,287 @@ def _dedup(seq: List[str]) -> List[str]:
     return out
 
 
-def _data_dir() -> Path:
-    # trading_core/data/
-    return Path(__file__).resolve().parents[1] / "data"
-
-
 def _load_market_seeds(market: Optional[str]) -> List[str]:
-    """
-    Load curated seed tickers for a given market from data/seeds.yml
-    Structure (example):
-      equities:
-        LSE: ["HSBA.L","BP.L","AZN.L",...]
-        XETRA: ["SAP.DE","DTE.DE",...]
-        ...
-    """
-    if not market:
+    """Read a few liquid local listings for `market` from seeds.yml, if available."""
+    if not market or not load_yaml_safe:
         return []
-    seeds_path = _data_dir() / "seeds.yml"
-    data = load_yaml(seeds_path)
-    eq = (data or {}).get("equities", {})
-    syms = list(eq.get(market, []) or [])
-    return _dedup(syms)[:MAX_UNIVERSE]
-
-
-def _calc_day_range_pct(price: Optional[float], high: Optional[float], low: Optional[float]) -> Optional[float]:
     try:
-        if price and high is not None and low is not None and price != 0:
-            return round(((float(high) - float(low)) / float(price)) * 100, 2)
+        # search default path within the repo structure
+        data = load_yaml_safe("trading_core/data/seeds.yml")
+        if not isinstance(data, dict):
+            return []
+        eq = data.get("equities", {})
+        if not isinstance(eq, dict):
+            return []
+        syms = eq.get(market, []) or []
+        return [s for s in syms if isinstance(s, str)]
     except Exception:
-        pass
-    return None
-
-
-def _row_from_yfinance(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """
-    Try yfinance first (best path; also gives us recent closes).
-    Returns (row_dict, error_msg_if_any).
-    """
-    try:
-        last = yf_adp.yfinance_history(sym, PRICE_HISTORY_DAYS + 2)
-        if not last or not last.get("price"):
-            return None, "yfinance: empty"
-        row = {
-            "asset": sym,
-            "symbol": sym,
-            "price": float(last["price"]),
-            "volume": int(last.get("volume") or 0),
-            "day_range_pct": float(last.get("day_range_pct") or 0.0),
-        }
-        hist = last.get("price_history") or []
-        if hist:
-            row["price_history"] = hist
-        return row, None
-    except Exception as e:
-        return None, f"yfinance: {e}"
-
-
-def _row_from_twelvedata(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """
-    TwelveData (if configured) — history first, else quote.
-    """
-    if not td_adp.is_configured():
-        return None, "twelvedata: not configured"
-    try:
-        h = td_adp.history(sym, interval="1day", outputsize=PRICE_HISTORY_DAYS + 2)
-        if h and h.get("price") is not None:
-            row = {
-                "asset": sym,
-                "symbol": sym,
-                "price": float(h["price"]),
-                "volume": int(h.get("volume") or 0),
-                "day_range_pct": float(h.get("day_range_pct") or 0.0),
-            }
-            ph = h.get("price_history") or []
-            if ph:
-                row["price_history"] = ph
-            return row, None
-
-        q = td_adp.quote(sym)
-        if q and q.get("price") is not None:
-            drp = _calc_day_range_pct(q.get("price"), q.get("high"), q.get("low"))
-            row = {
-                "asset": sym,
-                "symbol": sym,
-                "price": float(q["price"]),
-                "volume": int(q.get("volume") or 0),
-                "day_range_pct": float(drp or 0.0),
-            }
-            return row, None
-
-        return None, "twelvedata: empty"
-    except Exception as e:
-        return None, f"twelvedata: {e}"
-
-
-def _row_from_yahoo_quote(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """
-    Yahoo Quote JSON — quick price/volume/range fallback.
-    """
-    try:
-        q = yf_adp.quote_json(sym)
-        if not q or q.get("price") is None:
-            return None, "yahoo quote: empty"
-        drp = _calc_day_range_pct(q.get("price"), q.get("high"), q.get("low"))
-        row = {
-            "asset": sym,
-            "symbol": sym,
-            "price": float(q["price"]),
-            "volume": int(q.get("volume") or 0),
-            "day_range_pct": float(drp or 0.0),
-        }
-        return row, None
-    except Exception as e:
-        return None, f"yahoo quote: {e}"
-
-
-def _row_from_stooq(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """
-    Stooq — last-resort CSV quote.
-    """
-    try:
-        q = stq_adp.csv_quote(sym)
-        if not q or q.get("price") is None:
-            return None, "stooq: empty"
-        row = {
-            "asset": sym,
-            "symbol": sym,
-            "price": float(q["price"]),
-            "volume": int(q.get("volume") or 0),
-            "day_range_pct": float(q.get("day_range_pct") or 0.0),
-        }
-        return row, None
-    except Exception as e:
-        return None, f"stooq: {e}"
-
-
-def _fetch_one_symbol(sym: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """
-    Apply the per-symbol fallback chain and collect error notes.
-    """
-    errors: List[str] = []
-
-    row, err = _row_from_yfinance(sym)
-    if row:
-        return row, errors
-    if err:
-        errors.append(err)
-
-    row, err = _row_from_twelvedata(sym)
-    if row:
-        return row, errors
-    if err:
-        errors.append(err)
-
-    row, err = _row_from_yahoo_quote(sym)
-    if row:
-        return row, errors
-    if err:
-        errors.append(err)
-
-    row, err = _row_from_stooq(sym)
-    if row:
-        return row, errors
-    if err:
-        errors.append(err)
-
-    return None, errors
+        return []
 
 
 # ────────────────────────────────────────────────────────────
-# discovery
+# Discovery
 # ────────────────────────────────────────────────────────────
-def _discover_symbols(market: Optional[str], *, max_n: int = MAX_UNIVERSE) -> Tuple[List[str], str, List[str]]:
+def _discover_symbols(market: Optional[str],
+                      region: Optional[str],
+                      *,
+                      max_universe: int,
+                      force_seeds: bool) -> Tuple[List[str], str, List[str], List[str]]:
     """
-    Returns (symbols, source_label, skipped_reasons)
+    Return (symbols, used_label, failed_sources, skipped_sources)
     """
+    failed: List[str] = []
     skipped: List[str] = []
 
-    # 1) localized yahoo for the chosen market
-    if market and market in yf_adp.LOCALIZED_HOSTS:
+    # 0) If forcing seeds, try them first
+    if force_seeds and market:
+        seeds = _load_market_seeds(market)
+        if seeds:
+            return (seeds[:max_universe], f"Seed list ({market})", failed, skipped)
+        # If no seeds available, proceed with normal discovery but note this
+        skipped.append(f"Seed list ({market}) not found")
+
+    # 1) Try localized Yahoo screeners when market is known
+    if market and yf_adapter.market_supported(market):
         try:
-            syms_local = yf_adp.discover_from_localized_host(market, max_rows=max_n)
-            syms_local = _dedup(syms_local)
-            if syms_local:
-                return syms_local[:max_n], f"Yahoo Finance (regional: {market})", skipped
-            skipped.append(f"regional screeners ({market}) — empty")
+            syms = yf_adapter.discover_symbols(market, max_rows=max_universe)
+            if syms:
+                return (syms[:max_universe], f"Yahoo Finance (regional: {market})", failed, skipped)
+            else:
+                failed.append(f"Yahoo regional screener ({market})")
         except Exception as e:
-            skipped.append(f"regional screeners ({market}) — error: {e}")
+            failed.append(f"Yahoo regional screener ({market}): {e}")
 
-    # 2) US yahoo screeners
-    try:
-        syms_us = yf_adp.discover_from_us_screeners(max_rows=max_n)
-        syms_us = _dedup(syms_us)
-        if syms_us:
-            return syms_us[:max_n], "Yahoo Finance (US screeners)", skipped
-        skipped.append("US screeners — empty")
-    except Exception as e:
-        skipped.append(f"US screeners — error: {e}")
-
-    # 3) seeds.yml (market-specific)
+    # 2) Seeds for that market
     if market:
         seeds = _load_market_seeds(market)
         if seeds:
-            return seeds[:max_n], f"Seeds ({market})", skipped
-        skipped.append(f"seeds.yml — none for {market}")
+            skipped.append("Yahoo regional screener (fallback to seeds)")
+            return (seeds[:max_universe], f"Seed list ({market})", failed, skipped)
 
-    # no symbols
-    return [], "None", skipped
+    # 3) US screeners (broad liquid universe) as last resort
+    try:
+        syms_us = yf_adapter.discover_symbols(None, max_rows=max_universe)
+        if syms_us:
+            src = "Yahoo Finance (US screeners)"
+            if market:
+                skipped.append(f"Regional discovery ({market})")
+            return (syms_us[:max_universe], src, failed, skipped)
+        else:
+            failed.append("Yahoo US screeners (empty)")
+    except Exception as e:
+        failed.append(f"Yahoo US screeners: {e}")
+
+    return ([], "None", failed, skipped)
 
 
 # ────────────────────────────────────────────────────────────
-# public API
+# Quote & history
 # ────────────────────────────────────────────────────────────
-def fetch_equities_data(
-    include_history: bool = False,
-    *,
-    market: Optional[str] = None,
-    region: Optional[str] = None,      # reserved for future refinements
-    min_assets: int = 8,
-    force_seeds: bool = False,
-) -> List[Dict[str, Any]]:
+def _build_row(symbol: str,
+               price: Optional[float],
+               volume: Optional[int],
+               day_range_pct: Optional[float],
+               price_history: Optional[List[float]]) -> Optional[Dict[str, Any]]:
+    try:
+        if price is None:
+            return None
+        row: Dict[str, Any] = {
+            "asset": symbol,
+            "symbol": symbol,
+            "price": float(price),
+            "volume": int(volume or 0),
+            "day_range_pct": float(day_range_pct if day_range_pct is not None else 0.0),
+        }
+        if price_history:
+            row["price_history"] = price_history
+        return row
+    except Exception:
+        return None
+
+
+def _fetch_one_symbol(symbol: str, include_history: bool, prefer_td: bool,
+                      failed: List[str], skipped: List[str]) -> Optional[Dict[str, Any]]:
     """
-    Build a liquid stock universe and fetch quotes/history with robust fallbacks.
-
-    Args
-    ----
-    include_history : bool
-        When True, attach ~15 closes for technical indicators when available.
-    market : Optional[str]
-        Exchange key (e.g., "LSE", "XETRA", "TSE"). Improves localized discovery.
-    region : Optional[str]
-        Currently not used directly here; present for API symmetry/future filters.
-    min_assets : int
-        Minimum rows to return (try seeds if discovery results are too small).
-    force_seeds : bool
-        If True, skip discovery and use curated seeds for the market immediately.
-
-    Returns
-    -------
-    List[Dict[str, Any]] : normalized rows
+    Try providers in layered order to populate a single asset row.
     """
-    global LAST_STOCK_SOURCE, FAILED_STOCK_SOURCES, SKIPPED_STOCK_SOURCES
-    FAILED_STOCK_SOURCES = []
-    SKIPPED_STOCK_SOURCES = []
-    LAST_STOCK_SOURCE = "None"
+    # Prefer TwelveData when available
+    if prefer_td:
+        try:
+            if include_history:
+                ph = td_adapter.fetch_history(symbol, interval="1day", outputsize=20)  # last ~20 to ensure ≥15 closes
+                if ph and len(ph) >= 15:
+                    price = ph[-1]
+                    # Approximate day range pct from last 1-2 bars if needed (TwelveData returns closes only here)
+                    # We'll try Yahoo history next for richer intraday range if available
+                    vol = td_adapter.fetch_quote(symbol).get("volume") if hasattr(td_adapter, "fetch_quote") else None  # type: ignore
+                    # attempt Yahoo for better day range if available (optional)
+                    try:
+                        y_price, y_vol, y_drp, _ = yf_adapter.fetch_history(symbol)
+                        if y_drp is not None:
+                            day_range_pct = y_drp
+                            if vol is None:
+                                vol = y_vol
+                        else:
+                            day_range_pct = None
+                    except Exception:
+                        day_range_pct = None
+                    return _build_row(symbol, price, vol, day_range_pct, ph[-15:])
+            # Quote only
+            q = td_adapter.fetch_quote(symbol)
+            if q and q.get("price") is not None:
+                return _build_row(
+                    symbol,
+                    float(q["price"]),
+                    int(q.get("volume") or 0),
+                    float(q.get("day_range_pct")) if q.get("day_range_pct") is not None else None,
+                    None if not include_history else None,
+                )
+        except Exception as e:
+            failed.append(f"TwelveData({symbol})")
+            # fall through to Yahoo chain
 
-    # Discovery
-    symbols: List[str] = []
-    source_label = "None"
+    # Yahoo history (best when available)
+    try:
+        y_price, y_vol, y_drp, y_hist = yf_adapter.fetch_history(symbol)
+        if y_price is not None:
+            ph = y_hist[-15:] if (include_history and y_hist) else None
+            return _build_row(symbol, y_price, y_vol, y_drp, ph)
+    except Exception:
+        # Try Yahoo Quote JSON
+        try:
+            q_price, q_vol, q_drp = yf_adapter.fetch_quote_json(symbol)
+            if q_price is not None:
+                return _build_row(symbol, q_price, q_vol, q_drp, None)
+            else:
+                failed.append(f"Yahoo quote JSON({symbol})")
+        except Exception:
+            failed.append(f"Yahoo quote JSON({symbol})")
 
-    if force_seeds and market:
-        symbols = _load_market_seeds(market)
-        source_label = f"Seeds ({market})"
-        if not symbols:
-            SKIPPED_STOCK_SOURCES.append(f"forced seeds ({market}) — empty")
-    if not symbols:
-        symbols, source_label, skipped = _discover_symbols(market, max_n=MAX_UNIVERSE)
-        SKIPPED_STOCK_SOURCES.extend(skipped)
+    # Stooq CSV last resort
+    try:
+        s_price, s_vol, s_drp = stq_adapter.fetch_quote(symbol)
+        if s_price is not None:
+            return _build_row(symbol, s_price, s_vol, s_drp, None)
+        else:
+            failed.append(f"Stooq({symbol})")
+    except Exception:
+        failed.append(f"Stooq({symbol})")
 
-    # If still thin and market known, try seeds as booster
-    if market and len(symbols) < min_assets:
-        seeds = _load_market_seeds(market)
-        booster = [s for s in seeds if s not in symbols]
-        if booster:
-            symbols.extend(booster)
-            symbols = _dedup(symbols)[:MAX_UNIVERSE]
-            if "Seeds" not in source_label:
-                SKIPPED_STOCK_SOURCES.append("added market seeds as booster")
+    return None
 
-    if not symbols:
-        LAST_STOCK_SOURCE = "None"
-        FAILED_STOCK_SOURCES.append("Discovery: no symbols")
+
+# ────────────────────────────────────────────────────────────
+# Public API
+# ────────────────────────────────────────────────────────────
+def fetch_equities_data(include_history: bool = False,
+                        *,
+                        market: Optional[str] = None,
+                        region: Optional[str] = None,
+                        symbols: Optional[List[str]] = None,
+                        max_universe: int = 60,
+                        min_assets: int = 8,
+                        force_seeds: bool = False) -> List[Dict[str, Any]]:
+    """
+    Fetch a liquid universe of equities + quotes, optionally with 15 bars of history.
+
+    Args:
+        include_history: Include 'price_history' when possible (last 15 closes).
+        market: Optional exchange key (e.g., 'LSE', 'EN_PA', 'XETRA'). Improves discovery.
+        region: Optional region hint (not required; discovery mainly uses market).
+        symbols: If provided, skip discovery and fetch exactly these.
+        max_universe: Cap the number of discovered symbols (default 60).
+        min_assets: Desired minimum output rows (CLI will gate on this for indicators).
+        force_seeds: Force using seeds.yml (when you know screeners are flaky).
+
+    Returns:
+        List[AssetRow] rows (possibly empty if all providers failed).
+    """
+    global LAST_EQUITIES_SOURCE, FAILED_EQUITIES_SOURCES, SKIPPED_EQUITIES_SOURCES
+    LAST_EQUITIES_SOURCE = "None"
+    FAILED_EQUITIES_SOURCES = []
+    SKIPPED_EQUITIES_SOURCES = []
+
+    prefer_td = _prefer_twelvedata()
+
+    # 1) Discover universe
+    if symbols:
+        universe = symbols[:max_universe]
+        used_label = "User-specified symbols"
+    else:
+        universe, used_label, disc_failed, disc_skipped = _discover_symbols(
+            market, region, max_universe=max_universe, force_seeds=force_seeds
+        )
+        FAILED_EQUITIES_SOURCES.extend(disc_failed)
+        SKIPPED_EQUITIES_SOURCES.extend(disc_skipped)
+
+    if not symbols and not universe:
+        LAST_EQUITIES_SOURCE = "None"
+        if not FAILED_EQUITIES_SOURCES:
+            FAILED_EQUITIES_SOURCES.append("Discovery")
         return []
 
-    LAST_STOCK_SOURCE = source_label
+    if not symbols:
+        LAST_EQUITIES_SOURCE = used_label
+    else:
+        LAST_EQUITIES_SOURCE = f"{used_label}"
 
-    # Per-symbol quotes
+    # 2) Fetch quotes/history per symbol with layered fallbacks
     rows: List[Dict[str, Any]] = []
     used_td = False
     used_yq = False
-    used_stooq = False
+    used_stq = False
 
-    for sym in symbols:
-        row, errors = _fetch_one_symbol(sym)
+    for sym in universe:
+        before_failed = set(FAILED_EQUITIES_SOURCES)
+        row = _fetch_one_symbol(sym, include_history, prefer_td, FAILED_EQUITIES_SOURCES, SKIPPED_EQUITIES_SOURCES)
         if row:
-            # keep history only if requested
-            if not include_history and "price_history" in row:
-                row.pop("price_history", None)
             rows.append(row)
+        # mark which fallbacks got used by looking at new failures (best-effort signal)
+        after_failed = set(FAILED_EQUITIES_SOURCES)
+        new_fails = after_failed - before_failed
+        # we can infer which path succeeded by absence of failure; this is soft.
+        # For a clearer signal, you could instrument _fetch_one_symbol to return a tag.
+        # For now, we conservatively set 'used_*' flags when earlier providers failed for this symbol.
+        if any("TwelveData(" in x for x in new_fails):
+            # TwelveData failed → likely used Yahoo or Stooq
+            pass
         else:
-            # map errors to diagnostics flags
-            for e in errors:
-                if e.startswith("twelvedata:") and not used_td:
-                    used_td = True
-                if e.startswith("yahoo quote:") and not used_yq:
-                    used_yq = True
-                if e.startswith("stooq:") and not used_stooq:
-                    used_stooq = True
-            # collect last error for reference
-            if errors:
-                FAILED_STOCK_SOURCES.append(f"{sym}: {errors[-1]}")
+            if prefer_td:
+                used_td = True
 
-    # Tag which fallbacks we ended up using successfully for *some* symbols
-    # (We can't know per-call success cleanly here without verbose tracking;
-    #  use a simple hint so the CLI can print “skipped/used fallback” messages.)
-    if td_adp.is_configured():
-        SKIPPED_STOCK_SOURCES.append("yfinance history (TwelveData used where needed)")
-    SKIPPED_STOCK_SOURCES.append("yfinance history (Yahoo Quote JSON/Stooq used where needed)")
+        if any("Yahoo quote JSON" in x for x in new_fails):
+            used_yq = True
+        if any("Stooq" in x for x in new_fails):
+            used_stq = True
 
-    # Final hygiene
-    rows = rows[:MAX_UNIVERSE]
-    FAILED_STOCK_SOURCES = _dedup(FAILED_STOCK_SOURCES)
-    SKIPPED_STOCK_SOURCES = _dedup(SKIPPED_STOCK_SOURCES)
+        if len(rows) >= max_universe:
+            break
 
-    # Ensure we meet minimum assets if requested
-    if len(rows) < min_assets:
-        FAILED_STOCK_SOURCES.append(f"Min-assets shortfall: need ≥{min_assets}, have {len(rows)}")
+    if used_yq:
+        SKIPPED_EQUITIES_SOURCES.append("yfinance history (used Yahoo Quote JSON fallback)")
+    if used_stq:
+        SKIPPED_EQUITIES_SOURCES.append("yfinance history (used Stooq fallback)")
+    if used_td:
+        SKIPPED_EQUITIES_SOURCES.append("Yahoo/TwelveData secondary fallbacks not used for some symbols")
+
+    # 3) Dedup diagnostics
+    FAILED_EQUITIES_SOURCES = _dedup(FAILED_EQUITIES_SOURCES)
+    SKIPPED_EQUITIES_SOURCES = _dedup(SKIPPED_EQUITIES_SOURCES)
+
+    # 4) If output is too small and seeds exist (equities often hit screener quirks),
+    #    try to supplement from seeds once (unless user explicitly passed symbols)
+    if not symbols and len(rows) < min_assets and market:
+        seeds = _load_market_seeds(market)
+        if seeds:
+            SKIPPED_EQUITIES_SOURCES.append("Supplemented with seeds to reach min_assets")
+            supplement = [s for s in seeds if s not in universe]
+            for sym in supplement:
+                row = _fetch_one_symbol(sym, include_history, prefer_td, FAILED_EQUITIES_SOURCES, SKIPPED_EQUITIES_SOURCES)
+                if row:
+                    rows.append(row)
+                if len(rows) >= min_assets:
+                    break
+            rows = rows[:max_universe]
 
     return rows
