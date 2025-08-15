@@ -136,8 +136,9 @@ setup-api: ## Interactive API key setup
 	@echo ""
 	@echo "$(BLUE)📝 Note: All APIs are optional. The app works without them but with limited data sources.$(NC)"
 	@echo ""
-	@read -p "$(CYAN)Press Enter to start configuration (or Ctrl+C to skip)...$(NC)" dummy; \
-	$(MAKE) _interactive_api_setup
+	@printf "$(CYAN)Press Enter to start configuration (or Ctrl+C to skip)...$(NC)"
+	@read dummy
+	@$(MAKE) _interactive_api_setup
 
 .PHONY: _interactive_api_setup
 _interactive_api_setup:
@@ -148,51 +149,56 @@ _interactive_api_setup:
 	@echo ""
 	@echo "$(GREEN)📊 Financial Data APIs$(NC)"
 	@echo "=========================="
-	@read -p "Enter TwelveData API key (or press Enter to skip): " twelvedata_key; \
-	if [ ! -z "$$twelvedata_key" ]; then \
+	@printf "Enter TwelveData API key (or press Enter to skip): "; \
+	read twelvedata_key; \
+	if [ ! -z "$twelvedata_key" ]; then \
 		if grep -q "TWELVEDATA_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$$twelvedata_key/" $(ENV_FILE); \
+			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$twelvedata_key/" $(ENV_FILE); \
 		else \
-			echo "TWELVEDATA_API_KEY=$$twelvedata_key" >> $(ENV_FILE); \
+			echo "TWELVEDATA_API_KEY=$twelvedata_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ TwelveData API key saved$(NC)"; \
 	fi
-	@read -p "Enter Alpha Vantage API key (or press Enter to skip): " alphavantage_key; \
-	if [ ! -z "$$alphavantage_key" ]; then \
+	@printf "Enter Alpha Vantage API key (or press Enter to skip): "; \
+	read alphavantage_key; \
+	if [ ! -z "$alphavantage_key" ]; then \
 		if grep -q "ALPHA_VANTAGE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$$alphavantage_key/" $(ENV_FILE); \
+			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$alphavantage_key/" $(ENV_FILE); \
 		else \
-			echo "ALPHA_VANTAGE_API_KEY=$$alphavantage_key" >> $(ENV_FILE); \
+			echo "ALPHA_VANTAGE_API_KEY=$alphavantage_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Alpha Vantage API key saved$(NC)"; \
 	fi
-	@read -p "Enter CryptoCompare API key (or press Enter to skip): " cryptocompare_key; \
-	if [ ! -z "$$cryptocompare_key" ]; then \
+	@printf "Enter CryptoCompare API key (or press Enter to skip): "; \
+	read cryptocompare_key; \
+	if [ ! -z "$cryptocompare_key" ]; then \
 		if grep -q "CRYPTOCOMPARE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$$cryptocompare_key/" $(ENV_FILE); \
+			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$cryptocompare_key/" $(ENV_FILE); \
 		else \
-			echo "CRYPTOCOMPARE_API_KEY=$$cryptocompare_key" >> $(ENV_FILE); \
+			echo "CRYPTOCOMPARE_API_KEY=$cryptocompare_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ CryptoCompare API key saved$(NC)"; \
 	fi
 	@echo ""
 	@echo "$(PURPLE)🤖 AI APIs (Optional)$(NC)"
 	@echo "======================"
-	@read -p "Enter OpenAI API key (or press Enter to skip): " openai_key; \
-	if [ ! -z "$$openai_key" ]; then \
+	@printf "Enter OpenAI API key (or press Enter to skip): "; \
+	read openai_key; \
+	if [ ! -z "$openai_key" ]; then \
 		if grep -q "OPENAI_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$$openai_key/" $(ENV_FILE); \
+			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$openai_key/" $(ENV_FILE); \
 		else \
-			echo "OPENAI_API_KEY=$$openai_key" >> $(ENV_FILE); \
+			echo "OPENAI_API_KEY=$openai_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ OpenAI API key saved$(NC)"; \
 	fi
-	@read -p "Enter Anthropic API key (or press Enter to skip): " anthropic_key; \
-	if [ ! -z "$$anthropic_key" ]; then \
+	@printf "Enter Anthropic API key (or press Enter to skip): "; \
+	read anthropic_key; \
+	if [ ! -z "$anthropic_key" ]; then \
 		if grep -q "ANTHROPIC_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$$anthropic_key/" $(ENV_FILE); \
+			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$anthropic_key/" $(ENV_FILE); \
 		else \
-			echo "ANTHROPIC_API_KEY=$$anthropic_key" >> $(ENV_FILE); \
+			echo "ANTHROPIC_API_KEY=$anthropic_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Anthropic API key saved$(NC)"; \
 	fi
@@ -206,35 +212,35 @@ check-api: venv ## Check API key configuration status
 	@echo "$(CYAN)🔍 Checking API Configuration$(NC)"
 	@echo "================================="
 	@$(PYTHON_VENV) -c "\
-import os; \
-from pathlib import Path; \
-env_file = Path('.env'); \
-if env_file.exists(): \
-    with open(env_file) as f: \
-        lines = f.readlines(); \
-    keys = {}; \
-    for line in lines: \
-        if '=' in line and not line.strip().startswith('#'): \
-            key, val = line.strip().split('=', 1); \
-            keys[key] = bool(val.strip()); \
-    print('📊 Financial Data APIs:'); \
-    for api in ['TWELVEDATA_API_KEY', 'ALPHA_VANTAGE_API_KEY', 'CRYPTOCOMPARE_API_KEY']: \
-        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured'; \
-        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}'); \
-    print(''); \
-    print('🤖 AI APIs:'); \
-    for api in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY']: \
-        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured'; \
-        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}'); \
-    missing = [k.replace('_API_KEY', '') for k, v in keys.items() if not v and 'API_KEY' in k]; \
-    if missing: \
-        print(''); \
-        print('🔧 To add missing keys: make setup-api'); \
-    else: \
-        print(''); \
-        print('🎉 All API keys configured!'); \
-else: \
-    print('❌ .env file not found. Run: make setup-env'); \
+import os;\
+from pathlib import Path;\
+env_file = Path('.env');\
+if env_file.exists():\
+    with open(env_file) as f:\
+        lines = f.readlines();\
+    keys = {};\
+    for line in lines:\
+        if '=' in line and not line.strip().startswith('#'):\
+            key, val = line.strip().split('=', 1);\
+            keys[key] = bool(val.strip());\
+    print('📊 Financial Data APIs:');\
+    for api in ['TWELVEDATA_API_KEY', 'ALPHA_VANTAGE_API_KEY', 'CRYPTOCOMPARE_API_KEY']:\
+        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured';\
+        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}');\
+    print('');\
+    print('🤖 AI APIs:');\
+    for api in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY']:\
+        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured';\
+        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}');\
+    missing = [k.replace('_API_KEY', '') for k, v in keys.items() if not v and 'API_KEY' in k];\
+    if missing:\
+        print('');\
+        print('🔧 To add missing keys: make setup-api');\
+    else:\
+        print('');\
+        print('🎉 All API keys configured!');\
+else:\
+    print('❌ .env file not found. Run: make setup-env');\
 "
 
 .PHONY: show-api-info
