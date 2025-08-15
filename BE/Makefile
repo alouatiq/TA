@@ -35,13 +35,15 @@ PYTHON_BIN ?= python3
 $(VENV_DIR):
 	@echo "🐍 Creating virtual environment at $(VENV_DIR)"
 	@$(PYTHON_BIN) -m venv $(VENV_DIR)
+	@echo "✅ Virtual environment created"
 
 # Install marker file - only reinstall if requirements.txt is newer
 $(VENV_DIR)/.installed: $(VENV_DIR) requirements.txt
-	@echo "📦 Installing/updating requirements"
-	@$(PIP) install --upgrade pip
-	@$(PIP) install -r requirements.txt
+	@echo "📦 Installing/updating requirements (requirements.txt changed)"
+	@$(PIP) install --upgrade pip -q
+	@$(PIP) install -r requirements.txt -q
 	@touch $(VENV_DIR)/.installed
+	@echo "✅ Packages installed successfully"
 
 setup: $(VENV_DIR)/.installed  ## Create venv & install deps (only if needed)
 	@echo "✅ Setup complete!"
