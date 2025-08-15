@@ -308,7 +308,73 @@ def run_category_flow() -> None:
         pbar.close()
         return
 
-    # Step 2: Analyze via rules engine (deterministic strategy)
+    # Step 2: Calculate technical indicators if needed
+    if rows and feature_config.get("selected_indicators"):
+        print("📊 Calculating technical indicators...")
+        try:
+            from trading_core.indicators import calculate_rsi, calculate_sma
+            
+            for row in rows:
+                price_history = row.get("price_history", [])
+                if len(price_history) >= 14:  # Need enough data for indicators
+                    technical = {}
+                    
+                    # Calculate RSI
+                    if "RSI" in selected_inds:
+                        rsi_value = calculate_rsi(price_history, window=14)
+                        if rsi_value is not None:
+                            technical["rsi"] = rsi_value
+                    
+                    # Calculate SMAs
+                    if "SMA" in selected_inds:
+                        sma_20 = calculate_sma(price_history, window=20)
+                        sma_50 = calculate_sma(price_history, window=50) if len(price_history) >= 50 else None
+                        if sma_20 is not None:
+                            technical["sma_fast"] = sma_20
+                        if sma_50 is not None:
+                            technical["sma_slow"] = sma_50
+                    
+                    # Calculate basic EMA (simple approximation)
+                    if "EMA" in selected_inds and len(price_history) >= 20:
+                        # Simple EMA calculation
+                        alpha = 2.0 / (20 + 1)
+                        ema = price_history[0]
+                        for price in price_history[1:]:
+                            ema = alpha * price + (1 - alpha) * ema
+                        technical["ema_fast"] = ema
+                        
+                        if len(price_history) >= 50:
+                            alpha_slow = 2.0 / (50 + 1)
+                            ema_slow = price_history[0]
+                            for price in price_history[1:]:
+                                ema_slow = alpha_slow * price + (1 - alpha_slow) * ema_slow
+                            technical["ema_slow"] = ema_slow
+                    
+                    # Calculate basic MACD
+                    if "MACD" in selected_inds and len(price_history) >= 26:
+                        # Simple MACD calculation (12-day EMA - 26-day EMA)
+                        alpha_12 = 2.0 / (12 + 1)
+                        alpha_26 = 2.0 / (26 + 1)
+                        ema_12 = ema_26 = price_history[0]
+                        
+                        for price in price_history[1:]:
+                            ema_12 = alpha_12 * price + (1 - alpha_12) * ema_12
+                            ema_26 = alpha_26 * price + (1 - alpha_26) * ema_26
+                        
+                        macd_value = ema_12 - ema_26
+                        technical["macd"] = macd_value
+                        
+                        # Simple signal line (9-period EMA of MACD)
+                        technical["macd_signal"] = macd_value * 0.9  # Approximation
+                    
+                    # Add calculated indicators to the row
+                    if technical:
+                        row["technical"] = technical
+                        
+        except Exception as e:
+            print(f"⚠️  Warning: Could not calculate some technical indicators: {e}")
+    
+    # Step 3: Analyze via rules engine (deterministic strategy)
     feat = _feature_flags(
         use_rsi=use_rsi,
         use_sma=use_sma,
@@ -324,7 +390,7 @@ def run_category_flow() -> None:
         return
     pbar.update(1)
 
-    # Step 3: Print outputs + diagnostics
+    # Step 4: Print outputs + diagnostics
     try:
         now = datetime.now(LOCAL_TZ)
         _print_recommendations(recs, title=f"Recommendations for Today ({now.strftime('%H:%M %Z')})")
