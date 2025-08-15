@@ -1,3 +1,4 @@
+# BE/trading_core/config.py
 """
 config.py
 ─────────
@@ -30,8 +31,9 @@ import zoneinfo
 # ────────────────────────────────────────────────────────────
 @lru_cache(maxsize=1)
 def _repo_root() -> Path:
-    # Resolve based on this file’s location: <repo>/BE/trading_core/config.py
-    return Path(__file__).resolve().parents[2]
+    # Resolve based on this file's location: TA/BE/trading_core/config.py
+    # We want to return the BE directory (parents[1])
+    return Path(__file__).resolve().parents[1]
 
 
 @lru_cache(maxsize=1)
@@ -40,18 +42,34 @@ def _data_dir() -> Path:
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    """Load YAML file safely, returning empty dict if file doesn't exist or has errors."""
+    try:
+        if not path.exists():
+            print(f"[W] YAML file not found: {path}")
+            return {}
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+            print(f"[I] Successfully loaded: {path}")
+            return data
+    except Exception as e:
+        print(f"[E] Error loading YAML file {path}: {e}")
+        return {}
 
 
 @lru_cache(maxsize=1)
 def _markets_yaml() -> Dict[str, Any]:
-    return _load_yaml(_data_dir() / "markets.yml")
+    """Load markets.yml configuration."""
+    markets_path = _data_dir() / "markets.yml"
+    print(f"[D] Looking for markets.yml at: {markets_path}")
+    return _load_yaml(markets_path)
 
 
 @lru_cache(maxsize=1)
 def _seeds_yaml() -> Dict[str, Any]:
-    return _load_yaml(_data_dir() / "seeds.yml")
+    """Load seeds.yml configuration."""
+    seeds_path = _data_dir() / "seeds.yml"
+    print(f"[D] Looking for seeds.yml at: {seeds_path}")
+    return _load_yaml(seeds_path)
 
 
 # ────────────────────────────────────────────────────────────
@@ -82,104 +100,197 @@ def get_market_info(market_key: str) -> Dict[str, Any]:
 
 def get_region_for_market(market_key: str) -> Optional[str]:
     """Return the region string for a market key, or None."""
-    return get_market_info(market_key).get("region")
+    info = get_market_info(market_key)
+    return info.get("region")
+
+
+def load_markets_config() -> Dict[str, Any]:
+    """
+    Public function to load markets configuration.
+    Called by main.py during warm-up.
+    """
+    try:
+        markets = _markets_yaml()
+        if markets:
+            print(f"[I] Loaded {len(markets)} markets from configuration")
+        else:
+            print("[W] No markets found in configuration")
+        return markets
+    except Exception as e:
+        print(f"[E] Failed to load markets config: {e}")
+        return {}
+
+
+def load_yaml_safe(relative_path: str) -> Dict[str, Any]:
+    """
+    Load a YAML file relative to the repo root.
+    Used by other modules (like data_fetcher) to load configuration files.
+    """
+    try:
+        full_path = _repo_root() / relative_path
+        return _load_yaml(full_path)
+    except Exception as e:
+        print(f"[E] Error loading {relative_path}: {e}")
+        return {}
 
 
 # ────────────────────────────────────────────────────────────
-# Time helpers
+# Market grouping and organization
 # ────────────────────────────────────────────────────────────
-def _parse_hhmm(s: str) -> time:
-    h, m = (s or "00:00").split(":")
-    return time(int(h), int(m))
+def group_markets_by_region(markets_data: Optional[Dict] = None) -> Dict[str, List[Tuple[str, Dict]]]:
+    """Group markets by region for UI display."""
+    if markets_data is None:
+        markets_data = _markets_yaml()
+    
+    grouped: Dict[str, List[Tuple[str, Dict]]] = {}
+    
+    for market_key, market_info in markets_data.items():
+        region = market_info.get("region", "Other")
+        if region not in grouped:
+            grouped[region] = []
+        grouped[region].append((market_key, market_info))
+    
+    # Sort markets within each region
+    for region_markets in grouped.values():
+        region_markets.sort(key=lambda x: x[1].get("label", x[0]))
+    
+    return grouped
 
 
-def _today_in_tz(tz: zoneinfo.ZoneInfo) -> datetime:
-    now = datetime.now(tz)
-    return datetime(now.year, now.month, now.day, tzinfo=tz)
+def get_region_order(grouped_markets: Dict[str, List]) -> List[str]:
+    """Return preferred order of regions for display."""
+    preferred_order = ["Americas", "Europe", "Asia", "MEA"]
+    regions = list(grouped_markets.keys())
+    
+    # Put preferred regions first, then others alphabetically
+    ordered = []
+    for region in preferred_order:
+        if region in regions:
+            ordered.append(region)
+    
+    for region in sorted(regions):
+        if region not in ordered:
+            ordered.append(region)
+    
+    return ordered
+
+
+# ────────────────────────────────────────────────────────────
+# Time and session helpers
+# ────────────────────────────────────────────────────────────
+@dataclass
+class MarketSession:
+    """Represents a market trading session."""
+    start_time: time
+    end_time: time
+    timezone: zoneinfo.ZoneInfo
+
+
+def _parse_time(time_str: str) -> time:
+    """Parse HH:MM format time string."""
+    try:
+        hour, minute = map(int, time_str.split(":"))
+        return time(hour, minute)
+    except Exception:
+        return time(0, 0)  # Default to midnight
 
 
 def sessions_today(market_key: str) -> List[Tuple[datetime, datetime]]:
     """
-    Convert sessions from markets.yml into concrete (start_dt, end_dt) *today*
-    in the market's local timezone. Handles split sessions (e.g., HKEX, TSE).
+    Return today's trading sessions as (start_dt, end_dt) tuples in UTC.
+    Returns empty list if market is closed today or unknown.
     """
-    mi = get_market_info(market_key)
-    tzname = mi.get("timezone", "UTC")
+    info = get_market_info(market_key)
+    today = datetime.now().weekday()  # 0=Monday, 6=Sunday
+    
+    # Check if market trades today
+    trading_days = info.get("trading_days", [])
+    if today not in trading_days:
+        return []
+    
+    # Get timezone
+    tz_name = info.get("timezone", "UTC")
     try:
-        mtz = zoneinfo.ZoneInfo(tzname)
+        market_tz = zoneinfo.ZoneInfo(tz_name)
     except Exception:
-        mtz = zoneinfo.ZoneInfo("UTC")
+        market_tz = zoneinfo.ZoneInfo("UTC")
+    
+    # Parse sessions
+    sessions = info.get("sessions", [])
+    today_dt = datetime.now(market_tz).date()
+    
+    session_times = []
+    for session in sessions:
+        if len(session) >= 2:
+            start_time = _parse_time(session[0])
+            end_time = _parse_time(session[1])
+            
+            start_dt = datetime.combine(today_dt, start_time, tzinfo=market_tz)
+            end_dt = datetime.combine(today_dt, end_time, tzinfo=market_tz)
+            
+            # Convert to UTC
+            start_utc = start_dt.astimezone(zoneinfo.ZoneInfo("UTC"))
+            end_utc = end_dt.astimezone(zoneinfo.ZoneInfo("UTC"))
+            
+            session_times.append((start_utc, end_utc))
+    
+    return session_times
 
-    base = _today_in_tz(mtz)
-    out: List[Tuple[datetime, datetime]] = []
 
-    for sess in mi.get("sessions", []):
-        try:
-            start_s, end_s = sess
-            start_dt = base.replace(hour=_parse_hhmm(start_s).hour, minute=_parse_hhmm(start_s).minute)
-            end_dt = base.replace(hour=_parse_hhmm(end_s).hour, minute=_parse_hhmm(end_s).minute)
-            # If end < start (rare), assume next-day rollover
-            if end_dt <= start_dt:
-                end_dt += timedelta(days=1)
-            out.append((start_dt, end_dt))
-        except Exception:
-            continue
-
-    return out
-
-
-def is_market_open(market_key: str, *, at: Optional[datetime] = None) -> bool:
-    """
-    Return True if the market is currently open (within any session window today).
-    Respects market-local timezone and trading_days.
-    """
-    mi = get_market_info(market_key)
-    tzname = mi.get("timezone", "UTC")
-    try:
-        mtz = zoneinfo.ZoneInfo(tzname)
-    except Exception:
-        mtz = zoneinfo.ZoneInfo("UTC")
-
-    now = at.astimezone(mtz) if at else datetime.now(mtz)
-    weekday_ok = (now.weekday() in set(mi.get("trading_days", [0, 1, 2, 3, 4])))
-
-    if not weekday_ok:
+def is_market_open(market_key: str) -> bool:
+    """Check if the market is currently open."""
+    sessions = sessions_today(market_key)
+    if not sessions:
         return False
-
-    for start_dt, end_dt in sessions_today(market_key):
-        if start_dt <= now <= end_dt:
+    
+    now_utc = datetime.now(zoneinfo.ZoneInfo("UTC"))
+    
+    for start_dt, end_dt in sessions:
+        if start_dt <= now_utc <= end_dt:
             return True
+    
     return False
 
 
 # ────────────────────────────────────────────────────────────
-# Seeds access (used by equities/funds discovery)
+# Environment and API key management
 # ────────────────────────────────────────────────────────────
-def seed_tickers_for(market_key: str) -> List[str]:
-    """Return a *copy* of the seed tickers list for a given market, or empty list."""
-    seeds = _seeds_yaml()
-    arr = seeds.get(market_key, []) or []
-    return list(arr)
+def load_api_keys() -> Dict[str, Optional[str]]:
+    """Load API keys from environment variables."""
+    return {
+        "TWELVEDATA_API_KEY": os.getenv("TWELVEDATA_API_KEY"),
+        "CRYPTOCOMPARE_API_KEY": os.getenv("CRYPTOCOMPARE_API_KEY"),
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+        "ALPHA_VANTAGE_API_KEY": os.getenv("ALPHA_VANTAGE_API_KEY"),
+    }
+
+
+def get_api_key(service: str) -> Optional[str]:
+    """Get a specific API key."""
+    keys = load_api_keys()
+    return keys.get(f"{service.upper()}_API_KEY")
 
 
 # ────────────────────────────────────────────────────────────
-# Environment / API keys
+# Debug helpers
 # ────────────────────────────────────────────────────────────
-@dataclass(frozen=True)
-class ApiKeys:
-    twelve_data: Optional[str]
-    crypto_compare: Optional[str]
-    openai: Optional[str]
+def debug_paths() -> None:
+    """Print path resolution for debugging."""
+    print(f"[D] Config file location: {Path(__file__).resolve()}")
+    print(f"[D] Repo root: {_repo_root()}")
+    print(f"[D] Data directory: {_data_dir()}")
+    print(f"[D] Markets.yml path: {_data_dir() / 'markets.yml'}")
+    print(f"[D] Markets.yml exists: {(_data_dir() / 'markets.yml').exists()}")
 
 
-def load_api_keys() -> ApiKeys:
-    """
-    Centralized env key discovery. Keeps naming flexible:
-      - TWELVEDATA_API_KEY or TWELVE_DATA_API_KEY
-      - CRYPTOCOMPARE_API_KEY
-      - OPENAI_API_KEY
-    """
-    td = os.getenv("TWELVEDATA_API_KEY") or os.getenv("TWELVE_DATA_API_KEY")
-    cc = os.getenv("CRYPTOCOMPARE_API_KEY")
-    oa = os.getenv("OPENAI_API_KEY")
-    return ApiKeys(twelve_data=td, crypto_compare=cc, openai=oa)
+if __name__ == "__main__":
+    # Debug mode when run directly
+    debug_paths()
+    try:
+        markets = load_markets_config()
+        print(f"[D] Successfully loaded {len(markets)} markets")
+        if markets:
+            print("[D] Available markets:", list(markets.keys())[:5], "...")
+    except Exception as e:
+        print(f"[E] Error: {e}")
