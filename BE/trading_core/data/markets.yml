@@ -242,6 +242,13 @@ BIT:
   sessions:
     - ["09:00", "17:30"]
 
+MOEX:
+  label: "Moscow Exchange (Russia)"
+  region: "Europe"
+  timezone: "Europe/Moscow"
+  trading_days: [0,1,2,3,4]
+  sessions:
+    - ["10:00","18:45"]
 
 # ───────────────────────────────
 # MIDDLE EAST & AFRICA
