@@ -1,0 +1,58 @@
+# Fallback seed tickers for equities discovery by market.
+# Keep these liquid/large-cap where possible. Symbols are Yahoo-style.
+# These are *only* used when screeners/primary discovery fail.
+
+NYSE:   ["AAPL","MSFT","AMZN","NVDA","JPM","XOM"]
+NASDAQ: ["AAPL","MSFT","NVDA","GOOGL","META","TSLA"]
+TSX:    ["RY.TO","TD.TO","ENB.TO","BNS.TO","SHOP.TO","CNQ.TO"]
+B3:     ["PETR4.SA","VALE3.SA","ITUB4.SA","BBDC4.SA","ABEV3.SA"]
+BMV:    ["AMXL.MX","WALMEX.MX","CEMEXCPO.MX","GFNORTEO.MX"]
+BVC:    ["ECOPETROL.CO","PFBCOLOM.CO","GRUPOARGOS.CO"]
+BVL:    ["BVN","CREDITC1.LM"]     # Best-effort; adjust as needed
+BYMA:   ["GGAL.BA","YPFD.BA","PAMP.BA"]
+BCS:    ["SQM-B.SN","FALABELLA.SN","ENELAM.SN"]
+
+LSE:    ["HSBA.L","BP.L","GSK.L","AZN.L","ULVR.L","BARC.L"]
+XETRA:  ["SAP.DE","DTE.DE","ALV.DE","SIE.DE","BAS.DE","BAYN.DE"]
+SIX:    ["NESN.SW","ROG.SW","NOVN.SW","UBSG.SW","CFR.SW"]
+BME:    ["ITX.MC","SAN.MC","BBVA.MC","IBE.MC","TEF.MC"]
+EN_PA:  ["BNP.PA","OR.PA","AIR.PA","MC.PA","SAN.PA"]
+EN_AM:  ["AD.AS","ASML.AS","PHIA.AS","IMCD.AS"]
+EN_BR:  ["ABI.BR","KBC.BR","SOLB.BR","UCB.BR"]
+EN_LI:  ["EDP.LS","GALP.LS","BCP.LS"]
+EN_DU:  ["CRH.IR","RYA.IR"]
+OMX_CPH:["NOVO-B.CO","DANSKE.CO","VWS.CO"]
+OMX_HEL:["NOKIA.HE","NESTE.HE","KNEBV.HE"]
+OMX_STO:["ERIC-B.ST","VOLV-B.ST","ATCO-A.ST","HMB.ST"]
+OSLO:   ["EQNR.OL","TEL.OL","NHY.OL"]
+WSE:    ["PKN.WA","PKO.WA","PZU.WA","KGH.WA"]
+VIE:    ["EBS.VI","VER.VI","OMV.VI"]
+BVB:    ["TLV.RO","SNP.RO","FP.RO"]
+ATHEX:  ["ETE.AT","ALPHA.AT","OPAP.AT"]
+PRG:    ["CEZ.PR","ERB.PR","KOMB.PR"]
+BUD:    ["OTP.BU","MOL.BU","RICHTER.BU"]
+BIT:    ["ENEL.MI","ENI.MI","ISP.MI","UCG.MI"]
+
+ADX:     ["ADNOCGAS.AE","ADCB.AE","ADNOCDIST.AE"]         # Yahoo suffixes may vary
+BHB:     ["ALBH.BH","NBB.BH"]
+BRVM:    ["SGBC.CI","BOAB.CI"]                             # Best-effort
+CSE_MA:  ["IAM.CS","ATW.CS","BCP.CS"]                      # Best-effort Casablanca symbols
+DFM:     ["EMAAR.DU","DEWA.DU","DFM.DU"]
+EGX:     ["COMI.CA","EFG.CA","ETEL.CA"]
+JSE:     ["NPN.JO","BHG.JO","SBK.JO","SOL.JO"]
+MSX:     ["OIBR.MS","BKMB.MS"]                             # Best-effort
+NGX:     ["MTNN.NL","GTCO.NL","ZENITHBANK.NL"]
+NSE_KE:  ["SCOM.NR","KCB.NR","EQTY.NR"]
+QSE:     ["QNBK.QA","IQCD.QA","MARK.QA"]
+TADAWUL: ["2222.SR","2010.SR","1180.SR","1010.SR"]
+
+ASX:     ["BHP.AX","CBA.AX","CSL.AX","NAB.AX","WBC.AX"]
+BSE_IN:  ["RELIANCE.BO","TCS.BO","HDFCBANK.BO","INFY.BO","ITC.BO"]
+NSE_IN:  ["RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ITC.NS"]
+HKEX:    ["0005.HK","0700.HK","0939.HK","1299.HK","2318.HK"]
+TSE:     ["7203.T","6758.T","9984.T","8306.T","9433.T"]
+KOSPI:   ["005930.KS","000660.KS","035420.KS","051910.KS"]
+SGX:     ["D05.SI","U11.SI","Z74.SI","C07.SI","C6L.SI"]
+SSE:     ["601318.SS","601988.SS","600519.SS","601398.SS"]
+SZSE:    ["000001.SZ","000333.SZ","000651.SZ","002415.SZ"]
+TWSE:    ["2330.TW","2317.TW","2412.TW","2454.TW"]
