@@ -48,10 +48,21 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import os
 
-# Adapters
-from .adapters import yahoo as yf_adapter
-from .adapters import stooq as stq_adapter
-from .adapters import twelvedata as td_adapter
+# Adapters - handle gracefully if they don't exist yet
+try:
+    from .adapters import yahoo as yf_adapter  # type: ignore
+except Exception:
+    yf_adapter = None  # type: ignore
+
+try:
+    from .adapters import stooq as stq_adapter  # type: ignore
+except Exception:
+    stq_adapter = None  # type: ignore
+
+try:
+    from .adapters import twelvedata as td_adapter  # type: ignore
+except Exception:
+    td_adapter = None  # type: ignore
 
 # Optional: we won't fail if these aren't present; we'll just skip them
 try:
@@ -113,14 +124,20 @@ def _discover_symbols(market: Optional[str] = None,
     symbols = []
     
     # Strategy 1: Yahoo localized screeners (if market supported)
-    if not force_seeds and market:
+    if not force_seeds and market and yf_adapter:
         try:
-            yahoo_symbols = yf_adapter.discover_equities(market=market, limit=max_universe)
-            if yahoo_symbols:
-                symbols.extend(yahoo_symbols)
-                return symbols[:max_universe]  # Early return if successful
+            # Check if adapter has discovery function
+            if hasattr(yf_adapter, 'discover_equities'):
+                yahoo_symbols = yf_adapter.discover_equities(market=market, limit=max_universe)
+                if yahoo_symbols:
+                    symbols.extend(yahoo_symbols)
+                    return symbols[:max_universe]  # Early return if successful
+            else:
+                SKIPPED_EQUITIES_SOURCES.append(f"Yahoo screener ({market}) - function not available")
         except Exception as e:
             FAILED_EQUITIES_SOURCES.append(f"Yahoo screener ({market})")
+    elif not yf_adapter:
+        SKIPPED_EQUITIES_SOURCES.append("Yahoo adapter not available")
     
     # Strategy 2: Seeds from YAML (if available)
     if load_yaml_safe and market:
@@ -134,13 +151,18 @@ def _discover_symbols(market: Optional[str] = None,
                     return symbols[:max_universe]  # Early return if successful
         except Exception as e:
             FAILED_EQUITIES_SOURCES.append(f"Seeds YAML ({market})")
+    elif not load_yaml_safe:
+        SKIPPED_EQUITIES_SOURCES.append("YAML loader not available")
     
     # Strategy 3: Yahoo US screeners (last resort)
-    if not symbols:
+    if not symbols and yf_adapter:
         try:
-            yahoo_us_symbols = yf_adapter.discover_equities(market="US", limit=max_universe)
-            if yahoo_us_symbols:
-                symbols.extend(yahoo_us_symbols)
+            if hasattr(yf_adapter, 'discover_equities'):
+                yahoo_us_symbols = yf_adapter.discover_equities(market="US", limit=max_universe)
+                if yahoo_us_symbols:
+                    symbols.extend(yahoo_us_symbols)
+            else:
+                SKIPPED_EQUITIES_SOURCES.append("Yahoo US screener - function not available")
         except Exception as e:
             FAILED_EQUITIES_SOURCES.append("Yahoo US screener")
     
@@ -164,57 +186,74 @@ def _fetch_quote_with_history(symbol: str, include_history: bool = False) -> Opt
     # Check if TwelveData API key is available
     has_twelvedata_key = bool(os.getenv("TWELVEDATA_API_KEY"))
     
-    # Method 1: TwelveData (if API key available and we need history)
-    if has_twelvedata_key:
+    # Method 1: TwelveData (if API key available and adapter exists)
+    if has_twelvedata_key and td_adapter:
         try:
-            td_data = td_adapter.fetch_quote_with_history(symbol, days=PRICE_HISTORY_DAYS if include_history else 0)
-            if td_data and td_data.get("price") is not None:
-                LAST_EQUITIES_SOURCE = "TwelveData"
-                price_history = td_data.get("price_history", []) if include_history else []
+            if hasattr(td_adapter, 'fetch_quote_with_history'):
+                td_data = td_adapter.fetch_quote_with_history(symbol, days=PRICE_HISTORY_DAYS if include_history else 0)
+                if td_data and td_data.get("price") is not None:
+                    LAST_EQUITIES_SOURCE = "TwelveData"
+                    price_history = td_data.get("price_history", []) if include_history else []
+                    return _build_row(
+                        symbol=symbol,
+                        price=td_data["price"],
+                        volume=td_data.get("volume"),
+                        day_range_pct=td_data.get("day_range_pct"),
+                        price_history=price_history
+                    )
+            else:
+                SKIPPED_EQUITIES_SOURCES.append(f"TwelveData({symbol}) - function not available")
+        except Exception as e:
+            FAILED_EQUITIES_SOURCES.append(f"TwelveData({symbol})")
+    elif not td_adapter:
+        SKIPPED_EQUITIES_SOURCES.append("TwelveData adapter not available")
+    
+    # Method 2: Yahoo Finance (with history if requested)
+    if yf_adapter:
+        try:
+            if include_history and hasattr(yf_adapter, 'fetch_quote_with_history'):
+                yf_data = yf_adapter.fetch_quote_with_history(symbol, days=PRICE_HISTORY_DAYS)
+            elif hasattr(yf_adapter, 'fetch_quote'):
+                yf_data = yf_adapter.fetch_quote(symbol)
+            else:
+                yf_data = None
+                SKIPPED_EQUITIES_SOURCES.append(f"Yahoo({symbol}) - functions not available")
+            
+            if yf_data and yf_data.get("price") is not None:
+                LAST_EQUITIES_SOURCE = "Yahoo Finance"
+                price_history = yf_data.get("price_history", []) if include_history else []
                 return _build_row(
                     symbol=symbol,
-                    price=td_data["price"],
-                    volume=td_data.get("volume"),
-                    day_range_pct=td_data.get("day_range_pct"),
+                    price=yf_data["price"],
+                    volume=yf_data.get("volume"),
+                    day_range_pct=yf_data.get("day_range_pct"),
                     price_history=price_history
                 )
         except Exception as e:
-            FAILED_EQUITIES_SOURCES.append(f"TwelveData({symbol})")
-    
-    # Method 2: Yahoo Finance (with history if requested)
-    try:
-        if include_history:
-            yf_data = yf_adapter.fetch_quote_with_history(symbol, days=PRICE_HISTORY_DAYS)
-        else:
-            yf_data = yf_adapter.fetch_quote(symbol)
-        
-        if yf_data and yf_data.get("price") is not None:
-            LAST_EQUITIES_SOURCE = "Yahoo Finance"
-            price_history = yf_data.get("price_history", []) if include_history else []
-            return _build_row(
-                symbol=symbol,
-                price=yf_data["price"],
-                volume=yf_data.get("volume"),
-                day_range_pct=yf_data.get("day_range_pct"),
-                price_history=price_history
-            )
-    except Exception as e:
-        FAILED_EQUITIES_SOURCES.append(f"Yahoo({symbol})")
+            FAILED_EQUITIES_SOURCES.append(f"Yahoo({symbol})")
+    else:
+        SKIPPED_EQUITIES_SOURCES.append("Yahoo adapter not available")
     
     # Method 3: Stooq CSV (price only, no history)
-    try:
-        stq_data = stq_adapter.fetch_quote(symbol)
-        if stq_data and stq_data.get("price") is not None:
-            LAST_EQUITIES_SOURCE = "Stooq"
-            return _build_row(
-                symbol=symbol,
-                price=stq_data["price"],
-                volume=stq_data.get("volume"),
-                day_range_pct=stq_data.get("day_range_pct"),
-                price_history=[]  # Stooq doesn't provide history
-            )
-    except Exception as e:
-        FAILED_EQUITIES_SOURCES.append(f"Stooq({symbol})")
+    if stq_adapter:
+        try:
+            if hasattr(stq_adapter, 'fetch_quote'):
+                stq_data = stq_adapter.fetch_quote(symbol)
+                if stq_data and stq_data.get("price") is not None:
+                    LAST_EQUITIES_SOURCE = "Stooq"
+                    return _build_row(
+                        symbol=symbol,
+                        price=stq_data["price"],
+                        volume=stq_data.get("volume"),
+                        day_range_pct=stq_data.get("day_range_pct"),
+                        price_history=[]  # Stooq doesn't provide history
+                    )
+            else:
+                SKIPPED_EQUITIES_SOURCES.append(f"Stooq({symbol}) - function not available")
+        except Exception as e:
+            FAILED_EQUITIES_SOURCES.append(f"Stooq({symbol})")
+    else:
+        SKIPPED_EQUITIES_SOURCES.append("Stooq adapter not available")
     
     # All methods failed
     return None
@@ -264,6 +303,8 @@ def fetch_equities_data(include_history: bool = False,
     if not target_symbols:
         print(f"✗ Symbol discovery failed for market '{market}' - no symbols found")
         print(f"  Failed sources: {', '.join(FAILED_EQUITIES_SOURCES)}")
+        if SKIPPED_EQUITIES_SOURCES:
+            print(f"  Skipped sources: {', '.join(SKIPPED_EQUITIES_SOURCES)}")
         return []
     
     # Step 2: Fetch quotes and optionally history for each symbol
@@ -273,14 +314,19 @@ def fetch_equities_data(include_history: bool = False,
         if row:
             results.append(row)
         
-        # Stop if we have enough results and meet minimum requirements
+        # Stop if we have enough results and meet maximum requirements
         if len(results) >= max_universe:
             break
     
     # Log final diagnostics
     if results:
         print(f"✓ Fetched {len(results)} equities (last source: {LAST_EQUITIES_SOURCE})")
+        if SKIPPED_EQUITIES_SOURCES:
+            print(f"  Note: Some sources were skipped: {', '.join(set(SKIPPED_EQUITIES_SOURCES))}")
     else:
-        print(f"✗ No equities data available (failed sources: {', '.join(FAILED_EQUITIES_SOURCES)})")
+        print(f"✗ No equities data available")
+        print(f"  Failed sources: {', '.join(FAILED_EQUITIES_SOURCES)}")
+        if SKIPPED_EQUITIES_SOURCES:
+            print(f"  Skipped sources: {', '.join(SKIPPED_EQUITIES_SOURCES)}")
     
     return results
