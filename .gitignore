@@ -1,0 +1,107 @@
+# -------------------------------
+# OS-specific junk
+# -------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# -------------------------------
+# Python
+# -------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.pdb
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# pyenv & pipenv
+.python-version
+Pipfile.lock
+
+# Build / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+.pytest_cache/
+*.cover
+*.py,cover
+nosetests.xml
+coverage.xml
+
+# -------------------------------
+# Logs & temp files
+# -------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+
+# -------------------------------
+# Environment files (keep example)
+# -------------------------------
+.env
+.env.local
+.env.*.local
+!BE/.env.example
+
+# -------------------------------
+# Frontend / Web build artifacts
+# -------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnp.js
+.vscode/
+
+# -------------------------------
+# IDE / Editor configs
+# -------------------------------
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# -------------------------------
+# Data / cache
+# -------------------------------
+*.sqlite3
+*.db
+data/
+cache/
+BE/trading_core/persistence/cache/
+
+# -------------------------------
+# Mac Finder & Spotlight
+# -------------------------------
+.AppleDouble
+.LSOverride
