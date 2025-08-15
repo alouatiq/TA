@@ -1,0 +1,34 @@
+# Core runtime
+python-dateutil>=2.9
+pytz>=2024.1
+tzlocal>=5.2
+PyYAML>=6.0.2
+requests>=2.32.3
+pandas>=2.2.2
+numpy>=1.26.4
+tqdm>=4.66.4
+
+# Market data providers / adapters
+yfinance>=0.2.44
+feedparser>=6.0.11
+
+# Technical indicators (uses pandas + numpy)
+ta>=0.11.0
+
+# Optional LLM strategy wrapper (only used if OPENAI_API_KEY is set)
+openai>=1.40.0
+
+# CLI quality of life (colorized output)
+rich>=13.7.1
+
+# Testing
+pytest>=8.2.0
+pytest-mock>=3.14.0
+
+# If you’ll use TwelveData and/or CryptoCompare:
+# (Not required to import, but you’ll need API keys via env)
+# twelvedata – we call the REST API directly via requests, so no extra lib.
+
+# If you plan to export plots or notebooks later:
+# matplotlib>=3.9.0    # <- optional
+# jupyterlab>=4.2.0    # <- optional
