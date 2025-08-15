@@ -1,492 +1,422 @@
-# BE/app_cli/terminal_ui.py
+# BE/app_cli/main.py
 """
-Terminal UI helpers for the Trading Assistant CLI.
+CLI runner for the Trading Assistant (Backend).
 
-This module keeps ALL user I/O in one place so the rest of the app stays
-headless and testable.
+Features
+--------
+• Original 7-category workflow (crypto, forex, equities, commodities, futures, warrants, funds)
+• New "Analyze a specific asset" workflow with selectable indicators
+• Region/market selection with colored open/closed dots (via terminal_ui)
+• Rules-based strategy (deterministic), indicator fusion, risk controls
+• Diagnostics (used/failed/skipped sources), simple P&L table, persistence
 
-Public API (used by app_cli/main.py):
-  • prompt_main_mode() -> "category" | "single_asset"
-  • ask_use_all_features() -> bool
-  • ask_use_rsi() -> bool
-  • ask_use_sma() -> bool
-  • ask_use_sentiment() -> bool
-  • get_user_choice() -> one of:
-        'crypto','forex','equities','commodities','futures','warrants','funds'
-  • get_user_budget() -> float
-  • get_market_selection_details() -> dict | {}   (e.g., {"market":"LSE"})
-  • prompt_single_asset_input() -> dict           (symbol, asset_class, indicators, etc.)
-  • print_header(), print_table(), print_kv(), print_line()  (pretty output)
-
-Region/market menus:
-  - Show colored dots for status: 🟢 open, 🟠 some open, 🔴 closed
-  - Show each market’s session hours converted to the USER’s local timezone
-
-This file *reads* market metadata via trading_core.config. If that fails for
-any reason, the UI degrades gracefully and uses neutral/defaults.
+This file stays thin; most logic lives in trading_core/* modules.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, Iterable
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from typing import Any, Dict, List, Optional
+
+import zoneinfo
 import tzlocal
+from tqdm import tqdm
 
-# ────────────────────────────────────────────────────────────
-# Try to import config helpers, but stay robust if anything fails
-# ────────────────────────────────────────────────────────────
+# Terminal UX (prompts and menus)
+from .terminal_ui import (
+    # main-mode & formatting
+    prompt_main_mode,                 # -> "category" | "single_asset"
+    print_header, print_table, print_kv, print_line,
+
+    # feature toggles & indicator selection
+    ask_use_all_features, ask_use_rsi, ask_use_sma, ask_use_sentiment,
+    prompt_indicator_bundle,          # -> {"all":bool,"selected":[...]} for old flow
+
+    # category flow
+    get_user_choice, get_user_budget, get_market_selection_details,
+
+    # single-asset flow
+    prompt_single_asset_input,        # -> {symbol, asset_class, market?, region?, timeframes?, indicators?, budget?, ...}
+)
+
+# Config (for warm-up/validation)
+from trading_core.config import load_markets_config, get_market_info
+
+# Data access facade
+from trading_core.data_fetcher import (
+    fetch_equities_data, fetch_crypto_data, fetch_forex_data, fetch_commodities_data,
+    fetch_futures_data, fetch_warrants_data, fetch_funds_data,
+    diagnostics_for, fetch_single_symbol_quote,
+)
+
+# Strategy (deterministic rules engine)
+from trading_core.strategy.rules_engine import (
+    analyze_market_batch,      # (rows, market_ctx, feature_flags, budget) -> [recs]
+    analyze_single_asset,      # (row, asset_class, market_ctx, feature_flags, budget) -> rec
+)
+
+# Persistence
+from trading_core.persistence.history_tracker import log_trade
+from trading_core.persistence.performance_evaluator import evaluate_previous_session
+
+# Logging
+from trading_core.utils.logging import get_logger
+
+log = get_logger(__name__)
+
+# Detect local timezone (fallback to EU/Paris)
 try:
-    from trading_core.config import (
-        load_markets_config,     # -> Dict[str, Dict]
-        get_market_info,         # (market_key) -> Dict
-        sessions_today,          # (market_key) -> List[Tuple[dt_start, dt_end]]
-        is_market_open,          # (market_key) -> bool
-    )
-except Exception:  # pragma: no cover
-    load_markets_config = None
-    get_market_info = None
-    sessions_today = None
-    is_market_open = None
+    LOCAL_TZ = zoneinfo.ZoneInfo(tzlocal.get_localzone_name())
+except Exception:
+    LOCAL_TZ = zoneinfo.ZoneInfo("Europe/Paris")
+
 
 # ────────────────────────────────────────────────────────────
-# Local timezone detection
+# Helpers
 # ────────────────────────────────────────────────────────────
-try:
-    LOCAL_TZ = ZoneInfo(tzlocal.get_localzone_name())
-except Exception:  # pragma: no cover
-    LOCAL_TZ = ZoneInfo("Europe/Paris")
+def _merge_market_context(selection: Optional[Dict[str, Any]], category_label: str) -> Dict[str, Any]:
+    """
+    Normalize a market context dict for downstream strategy/rules.
+    """
+    ctx = {
+        "market": None,
+        "market_name": category_label.title(),
+        "region": None,
+        "timezone": "UTC",
+        "sessions": [],
+        "trading_days": [],
+    }
+    if not selection:
+        return ctx
 
-# ────────────────────────────────────────────────────────────
-# Categories (canonical keys + labels)
-# ────────────────────────────────────────────────────────────
-_CATEGORIES: List[Tuple[str, str]] = [
-    ("crypto",      "Cryptocurrencies"),
-    ("forex",       "Forex (FX)"),
-    ("equities",    "Equities / Stocks"),
-    ("commodities", "Commodities (Metals)"),
-    ("futures",     "Index Futures / Proxies"),
-    ("warrants",    "Warrants & Leveraged ETPs"),
-    ("funds",       "Funds / ETFs"),
-]
-
-# Fallback region order if config grouping not available
-_REGION_ORDER_DEFAULT = [
-    "Americas",
-    "Europe",
-    "Middle East & Africa",
-    "Asia-Pacific",
-]
-
-
-# ═══════════════════════════════════════════════════════════
-# Printing helpers (shared by the CLI)
-# ═══════════════════════════════════════════════════════════
-def print_line(char: str = "─", width: int = 70) -> None:
-    print(char * width)
-
-
-def print_header(title: str) -> None:
-    print()
-    print_line("─")
-    print(title)
-    print_line("─")
-
-
-def print_kv(key: str, value) -> None:
-    print(f"{key}: {value}")
-
-
-def _col_widths(rows: Iterable[Iterable[str]]) -> List[int]:
-    widths: List[int] = []
-    for row in rows:
-        for i, cell in enumerate(row):
-            w = len(str(cell))
-            if i >= len(widths):
-                widths.append(w)
-            else:
-                widths[i] = max(widths[i], w)
-    return widths
-
-
-def print_table(headers: List[str], rows: List[List[str]]) -> None:
-    # compute widths with headers + rows
-    all_rows = [headers] + rows
-    widths = _col_widths(all_rows)
-    # header
-    hdr = "  ".join(str(h).ljust(widths[i]) for i, h in enumerate(headers))
-    print(hdr)
-    print("-" * len(hdr))
-    # rows
-    for r in rows:
-        print("  ".join(str(c).ljust(widths[i]) for i, c in enumerate(r)))
-
-
-# ═══════════════════════════════════════════════════════════
-# Basic yes/no prompts
-# ═══════════════════════════════════════════════════════════
-def _yn(prompt: str, default: bool = True) -> bool:
-    suffix = " [Y/n]: " if default else " [y/N]: "
-    while True:
-        ans = input(prompt + suffix).strip().lower()
-        if not ans:
-            return default
-        if ans in {"y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please answer y or n.")
-
-
-def ask_use_all_features() -> bool:
-    return _yn("Enable ALL optional features (RSI, SMA, Sentiment)?", default=True)
-
-
-def ask_use_rsi() -> bool:
-    return _yn("Enable RSI indicator?", default=True)
-
-
-def ask_use_sma() -> bool:
-    return _yn("Enable SMA indicator?", default=True)
-
-
-def ask_use_sentiment() -> bool:
-    return _yn("Enable sentiment analysis?", default=True)
-
-
-# ═══════════════════════════════════════════════════════════
-# Budget
-# ═══════════════════════════════════════════════════════════
-def get_user_budget() -> float:
-    while True:
-        raw = input("Enter your daily trading budget ($): ").strip()
+    market = selection.get("market")
+    region = selection.get("region")
+    if market:
         try:
-            val = float(raw)
-            if val <= 0:
-                raise ValueError
-            return val
+            mi = get_market_info(market)
+            ctx.update({
+                "market": market,
+                "market_name": mi.get("label", market),
+                "region": mi.get("region", region),
+                "timezone": mi.get("timezone", "UTC"),
+                "sessions": mi.get("sessions", []),
+                "trading_days": mi.get("trading_days", []),
+            })
         except Exception:
-            print("Please enter a positive number (e.g., 1000).")
+            ctx.update({"market": market, "region": region})
+    else:
+        if region:
+            ctx["region"] = region
+    return ctx
 
 
-# ═══════════════════════════════════════════════════════════
-# Main mode
-# ═══════════════════════════════════════════════════════════
-def prompt_main_mode() -> str:
+def _feature_flags(
+    *,
+    use_rsi: bool,
+    use_sma: bool,
+    use_sentiment: bool,
+    selected_indicators: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """
-    Choose between:
-      1) Explore by category (legacy 7‑category flow)
-      2) Analyze a specific asset (new flow)
+    Standardize feature flags for the rules engine.
+    selected_indicators examples: ["EMA","MACD","ADX","RSI","STOCH","OBV","BBANDS","ATR"]
     """
-    print("\nChoose a mode:")
-    print("  1. 📦 Explore by category (crypto / stocks / …)")
-    print("  2. 🎯 Analyze a specific asset (symbol/coin/pair)")
-    while True:
-        ans = input("Enter number: ").strip()
-        if ans == "1":
-            return "category"
-        if ans == "2":
-            return "single_asset"
-        print("Please choose 1 or 2.")
-
-
-# ═══════════════════════════════════════════════════════════
-# Category selection
-# ═══════════════════════════════════════════════════════════
-def get_user_choice() -> str:
-    print("\nSelect a CATEGORY:")
-    for i, (_, label) in enumerate(_CATEGORIES, start=1):
-        print(f"  {i}. {label}")
-    while True:
-        raw = input("Enter number: ").strip()
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(_CATEGORIES):
-                return _CATEGORIES[idx - 1][0]
-        except Exception:
-            pass
-        print(f"Choose a number between 1 and {len(_CATEGORIES)}.")
-
-
-# ═══════════════════════════════════════════════════════════
-# Region / Market menus (with colored status + sessions in local time)
-# ═══════════════════════════════════════════════════════════
-def _load_grouped_markets() -> Tuple[List[str], Dict[str, List[Tuple[str, Dict]]]]:
-    """
-    Returns:
-      (ordered_regions, grouped_markets)
-      grouped_markets[region] = [(market_key, market_info_dict), ...]
-    """
-    try:
-        markets = load_markets_config() if load_markets_config else {}
-    except Exception:
-        markets = {}
-
-    # group by market["region"]
-    grouped: Dict[str, List[Tuple[str, Dict]]] = {}
-    for mkey, mi in (markets or {}).items():
-        region = mi.get("region", "Other")
-        grouped.setdefault(region, []).append((mkey, mi))
-
-    # sort each region's markets by label
-    for r in grouped:
-        grouped[r].sort(key=lambda kv: kv[1].get("label", kv[0]))
-
-    # region order: our canonical sequence, then any leftovers
-    regions: List[str] = []
-    for r in _REGION_ORDER_DEFAULT:
-        if r in grouped:
-            regions.append(r)
-    for r in grouped.keys():
-        if r not in regions:
-            regions.append(r)
-
-    return regions, grouped
-
-
-def _region_status_dot(region: str, grouped: Dict[str, List[Tuple[str, Dict]]]) -> str:
-    """
-    Region dot:
-      🟢 all markets open   🟠 some open   🔴 all closed
-    """
-    mkts = grouped.get(region, [])
-    if not mkts:
-        return "⚪"
-    if not is_market_open:
-        return "🟠"  # unknown — neutral/some open
-    total = len(mkts)
-    open_cnt = 0
-    for mkey, _ in mkts:
-        try:
-            if is_market_open(mkey):  # type: ignore[misc]
-                open_cnt += 1
-        except Exception:
-            pass
-    if open_cnt == 0:
-        return "🔴"
-    if open_cnt == total:
-        return "🟢"
-    return "🟠"
-
-
-def _sessions_user_local_str(market_key: str, mi: Optional[Dict] = None) -> str:
-    """
-    Convert today's sessions for this market into the USER's local time.
-    Fallback to static sessions if sessions_today() is not available.
-    """
-    spans: List[str] = []
-    # live conversion via sessions_today()
-    if sessions_today:
-        try:
-            for start_dt, end_dt in sessions_today(market_key):  # type: ignore[misc]
-                spans.append(
-                    f"{start_dt.astimezone(LOCAL_TZ).strftime('%H:%M')}-"
-                    f"{end_dt.astimezone(LOCAL_TZ).strftime('%H:%M')}"
-                )
-        except Exception:
-            spans = []
-    # static fallback (exchange-local times)
-    if not spans and mi:
-        sess = mi.get("sessions") or []
-        if sess:
-            spans = [f"{s}-{e}" for s, e in sess]
-    return ", ".join(spans) if spans else "n/a"
-
-
-def _market_status_dot(market_key: str) -> str:
-    if not is_market_open:
-        return "🟠"
-    try:
-        return "🟢" if is_market_open(market_key) else "🔴"  # type: ignore[misc]
-    except Exception:
-        return "⚪"
-
-
-def _present_region_menu(regions: List[str], grouped: Dict[str, List[Tuple[str, Dict]]]) -> Optional[str]:
-    if not regions:
-        return None
-    print("\nSelect a REGION:")
-    for i, r in enumerate(regions, start=1):
-        dot = _region_status_dot(r, grouped)
-        print(f"  {i}. {dot} {r}")
-    while True:
-        raw = input("Enter number: ").strip()
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(regions):
-                return regions[idx - 1]
-        except Exception:
-            pass
-        print(f"Choose a number between 1 and {len(regions)}.")
-
-
-def _present_market_menu(region: str, markets: List[Tuple[str, Dict]]) -> Optional[str]:
-    if not markets:
-        return None
-
-    print(f"\nSelect a MARKET in {region}:")
-    for i, (mkey, mi) in enumerate(markets, start=1):
-        label = mi.get("label", mkey)
-        dot = _market_status_dot(mkey)
-        sess_local = _sessions_user_local_str(mkey, mi)
-        print(f"  {i}. {dot} {label} [{mkey}]  —  Hours (your time): {sess_local}")
-
-    while True:
-        raw = input("Enter number: ").strip()
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(markets):
-                return markets[idx - 1][0]
-        except Exception:
-            pass
-        print(f"Choose a number between 1 and {len(markets)}.")
-
-
-def get_market_selection_details() -> Dict[str, str]:
-    """
-    Interactive region -> market selection.
-    Returns {'market': MARKET_KEY} or {} if markets config unavailable.
-    """
-    regions, grouped = _load_grouped_markets()
-    if not regions or not grouped:
-        print("\n(Region/market list unavailable; proceeding without a specific market.)")
-        return {}
-
-    region = _present_region_menu(regions, grouped)
-    if not region:
-        return {}
-
-    market_key = _present_market_menu(region, grouped.get(region, []))
-    if not market_key:
-        return {}
-
-    return {"market": market_key}
-
-
-# ═══════════════════════════════════════════════════════════
-# Single-asset prompts (symbol + which indicators to run)
-# ═══════════════════════════════════════════════════════════
-_INDICATOR_CHOICES = [
-    ("SMA",     "Simple Moving Average"),
-    ("EMA",     "Exponential Moving Average"),
-    ("MACD",    "MACD (12,26,9)"),
-    ("ADX",     "Average Directional Index"),
-    ("RSI",     "Relative Strength Index (14)"),
-    ("STOCH",   "Stochastic Oscillator"),
-    ("OBV",     "On-Balance Volume"),
-    ("BBANDS",  "Bollinger Bands (20,2)"),
-    ("ATR",     "Average True Range"),
-]
-
-_ASSET_CLASS_CHOICES = [
-    ("equity", "Stock / ETF"),
-    ("crypto", "Crypto asset"),
-    ("forex",  "FX pair (e.g., EURUSD)"),
-    ("fund",   "Fund / ETF"),
-    ("warrant","Warrant / Leveraged ETP"),
-]
-
-
-def _ask_multiselect(name: str, choices: List[Tuple[str, str]]) -> List[str]:
-    """
-    Show a 1..N list and accept comma-separated selections.
-    Returns list of selected KEYS.
-    """
-    print(f"\nSelect {name} (comma-separated, or press Enter to skip):")
-    for i, (k, desc) in enumerate(choices, start=1):
-        print(f"  {i}. {k:<7} — {desc}")
-    raw = input("Your choice(s): ").strip()
-    if not raw:
-        return []
-    picked: List[str] = []
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    for p in parts:
-        if p.isdigit():
-            idx = int(p)
-            if 1 <= idx <= len(choices):
-                picked.append(choices[idx - 1][0])
-        else:
-            # allow typing the key, e.g., "RSI"
-            keys = {k.lower(): k for k, _ in choices}
-            if p.lower() in keys:
-                picked.append(keys[p.lower()])
-    # dedup, keep order
-    seen = set()
-    out: List[str] = []
-    for k in picked:
-        if k not in seen:
-            seen.add(k)
-            out.append(k)
-    return out
-
-
-def prompt_single_asset_input() -> Dict[str, object]:
-    """
-    Collect inputs for the single-asset analysis flow.
-    Returns a dict with keys:
-      symbol, asset_class, market?, region?, timeframes, indicators, budget,
-      use_rsi, use_sma, use_sentiment
-    """
-    print_header("Single-Asset Analysis")
-
-    # Asset class
-    print("Choose asset class:")
-    for i, (_, label) in enumerate(_ASSET_CLASS_CHOICES, start=1):
-        print(f"  {i}. {label}")
-    asset_class = "equity"
-    while True:
-        raw = input("Enter number [1]: ").strip() or "1"
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(_ASSET_CLASS_CHOICES):
-                asset_class = _ASSET_CLASS_CHOICES[idx - 1][0]
-                break
-        except Exception:
-            pass
-        print(f"Pick a number between 1 and {len(_ASSET_CLASS_CHOICES)}.")
-
-    # Symbol
-    ex = {"equity": "AAPL", "crypto": "BTC", "forex": "EURUSD", "fund": "SPY", "warrant": "TSLA3L.L"}
-    symbol = input(f"Enter symbol (e.g., {ex.get(asset_class)}): ").strip().upper()
-    while not symbol:
-        symbol = input("Symbol cannot be empty. Enter symbol: ").strip().upper()
-
-    # Market selection (needed mostly for equities/funds/warrants)
-    market = None
-    region = None
-    if asset_class in {"equity", "fund", "warrant"}:
-        use_market = _yn("Select a specific market/exchange for this symbol?", default=False)
-        if use_market:
-            sel = get_market_selection_details()
-            market = sel.get("market") if sel else None
-
-    # Timeframes (future MTF usage; keep simple)
-    timeframes = ["1d"]
-    tf_raw = input("Timeframes (comma-separated; default: 1d): ").strip()
-    if tf_raw:
-        parts = [p.strip() for p in tf_raw.split(",") if p.strip()]
-        timeframes = parts or ["1d"]
-
-    # Indicators
-    indicators = _ask_multiselect("indicators to run", _INDICATOR_CHOICES)
-
-    # Feature toggles — infer from indicators but allow overrides
-    use_rsi = "RSI" in indicators or ask_use_rsi()
-    use_sma = "SMA" in indicators or "EMA" in indicators or ask_use_sma()
-    use_sentiment = ask_use_sentiment()
-
-    # Budget (optional for single-asset — still useful for qty sizing)
-    budget = get_user_budget()
-
     return {
-        "symbol": symbol,
-        "asset_class": asset_class,
-        "market": market,
-        "region": region,
-        "timeframes": timeframes,
-        "indicators": indicators,
         "use_rsi": use_rsi,
         "use_sma": use_sma,
         "use_sentiment": use_sentiment,
-        "budget": budget,
+        "selected_indicators": selected_indicators or [],
     }
+
+
+def _print_recommendations(recommendations: List[Dict[str, Any]], *, title: str) -> None:
+    """
+    Pretty-print recommendations in a uniform table.
+    """
+    print_header(title)
+    rows = []
+    total_invest = 0.0
+    gross_profit = 0.0
+    for r in recommendations:
+        qty = int(r.get("quantity", 0))
+        price = float(r.get("price", 0.0))
+        cost = qty * price
+        total_invest += cost
+        gross_profit += float(r.get("estimated_profit", 0.0))
+        rows.append([
+            str(r.get("asset", "")),
+            qty,
+            f"{price:.2f}",
+            f"{cost:.2f}",
+            f"{float(r.get('sell_target', 0.0)):.2f}",
+            r.get("sell_time_disp", r.get("sell_time", "")),
+            f"{float(r.get('estimated_profit', 0.0)):.2f}",
+        ])
+    print_table(
+        headers=["Asset", "Qty", "Buy $", "Cost $", "Target $", "Sell@", "Profit $"],
+        rows=rows
+    )
+    print_line()
+    print_kv("Total Capital", f"{total_invest:.2f}")
+    print_kv("Gross Profit", f"{gross_profit:.2f}")
+
+
+def _print_diagnostics(category: str) -> None:
+    di = diagnostics_for(category)
+    used = di.get("used")
+    failed = di.get("failed") or []
+    skipped = di.get("skipped") or []
+    print_header("Feature Check Summary")
+    if used is not None:
+        print_kv("Market data source", used or "Not available")
+    if failed:
+        print_kv("Failed sources", ", ".join(map(str, failed)))
+    if skipped:
+        print_kv("Skipped sources", ", ".join(map(str, skipped)))
+
+
+def _include_history_needed(selected_indicators: List[str], use_rsi: bool, use_sma: bool) -> bool:
+    """
+    Decide whether to pull price history. If any technicals are on, we want it.
+    """
+    techs = {"SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"}
+    on = set(i.upper() for i in (selected_indicators or []))
+    return bool(use_rsi or use_sma or (techs & on))
+
+
+# ────────────────────────────────────────────────────────────
+# Category (multi-asset) flow
+# ────────────────────────────────────────────────────────────
+def run_category_flow() -> None:
+    """
+    Original 7-category workflow (now supports full indicator bundles).
+    """
+    # Yesterday’s report
+    prev = evaluate_previous_session()
+    if prev:
+        print_header("Yesterday’s Score-card")
+        rows = []
+        for r in prev:
+            high_txt = "?" if r.get("day_high") is None else f"{float(r['day_high']):.2f}"
+            rows.append([r.get("asset",""), f"{float(r.get('target',0.0)):.2f}", high_txt, r.get("hit","")])
+        print_table(["Asset","Target$","High$","Result"], rows)
+
+    # Quick toggles (legacy) + indicator bundle picker
+    if ask_use_all_features():
+        use_rsi = use_sma = use_sentiment = True
+    else:
+        use_rsi       = ask_use_rsi()
+        use_sma       = ask_use_sma()
+        use_sentiment = ask_use_sentiment()
+
+    bundle = prompt_indicator_bundle()  # {"all": bool, "selected":[...]}
+    selected_inds = bundle.get("selected", []) if not bundle.get("all", False) else [
+        "SMA","EMA","MACD","ADX","RSI","STOCH","OBV","BBANDS","ATR"
+    ]
+
+    print_line()
+    print_kv("RSI", use_rsi)
+    print_kv("SMA", use_sma)
+    print_kv("Sentiment", use_sentiment)
+    print_kv("Indicators", ", ".join(selected_inds) if selected_inds else "None")
+    print_line()
+
+    category = get_user_choice()     # canonical string
+    budget   = get_user_budget()
+
+    # Market context (for market-aware categories)
+    selection = None
+    try:
+        selection = get_market_selection_details()
+    except Exception:
+        selection = None
+    market_ctx = _merge_market_context(selection, category)
+
+    include_history = _include_history_needed(selected_inds, use_rsi, use_sma)
+
+    # progress bar across 3 stages
+    pbar = tqdm(total=3, desc="⏳ Processing", unit="step")
+
+    # 1) Fetch data
+    try:
+        rows: List[Dict[str, Any]] = []
+        if category == "equities":
+            rows = fetch_equities_data(include_history=include_history,
+                                       market=market_ctx.get("market"),
+                                       region=market_ctx.get("region"))
+        elif category == "crypto":
+            rows = fetch_crypto_data(include_history=include_history)
+        elif category == "forex":
+            rows = fetch_forex_data(include_history=include_history,
+                                    region=market_ctx.get("region"))
+        elif category == "commodities":
+            rows = fetch_commodities_data(include_history=include_history,
+                                          market=market_ctx.get("market"))
+        elif category == "futures":
+            rows = fetch_futures_data(include_history=include_history,
+                                      market=market_ctx.get("market"),
+                                      region=market_ctx.get("region"))
+        elif category == "warrants":
+            rows = fetch_warrants_data(include_history=include_history,
+                                       market=market_ctx.get("market"),
+                                       region=market_ctx.get("region"))
+        elif category == "funds":
+            rows = fetch_funds_data(include_history=include_history,
+                                    market=market_ctx.get("market"))
+        else:
+            print("⚠️  Unknown category.")
+            return
+    finally:
+        pbar.update(1)
+
+    if not rows:
+        print("\n❌ No market data fetched. Try a different market/region or later.")
+        return
+
+    # 2) Analyze via rules engine (deterministic strategy)
+    feat = _feature_flags(
+        use_rsi=use_rsi,
+        use_sma=use_sma,
+        use_sentiment=use_sentiment,
+        selected_indicators=selected_inds,
+    )
+    try:
+        recs = analyze_market_batch(rows, market_ctx=market_ctx, feature_flags=feat, budget=budget)
+    except Exception as e:
+        log.exception("rules engine failed")
+        print(f"\n❌ Strategy error: {e}")
+        return
+    pbar.update(1)
+
+    # 3) Print outputs + diagnostics
+    try:
+        now = datetime.now(LOCAL_TZ)
+        _print_recommendations(recs, title=f"Recommendations for Today ({now.strftime('%H:%M %Z')})")
+        _print_diagnostics(category)
+    finally:
+        pbar.update(1)
+        pbar.close()
+
+    # Persist
+    log_trade(
+        market_type=category,
+        budget=budget,
+        recommendations=recs,
+        features={
+            "RSI": use_rsi, "SMA": use_sma, "Sentiment": use_sentiment,
+            "Indicators": selected_inds
+        },
+    )
+
+
+# ────────────────────────────────────────────────────────────
+# Single-asset flow
+# ────────────────────────────────────────────────────────────
+def run_single_asset_flow() -> None:
+    """
+    Analyze one specific symbol/coin/pair with user-selected indicators.
+    """
+    # Collect input (symbol, asset_class, optional market/region, chosen indicators)
+    params = prompt_single_asset_input()
+    symbol       = params.get("symbol", "").strip()
+    asset_class  = params.get("asset_class", "equity").strip().lower()
+    market       = params.get("market")
+    region       = params.get("region")
+    timeframes   = params.get("timeframes", ["1d"])      # reserved for MTF extensions
+    indicators   = params.get("indicators", [])          # e.g., ["EMA","MACD","RSI","BBANDS","ATR"]
+    budget       = params.get("budget", 1000.0)
+
+    if not symbol:
+        print("❌ No symbol provided.")
+        return
+
+    # Feature flags: single-asset UI already collected toggles or indicators
+    use_rsi       = params.get("use_rsi", "RSI" in [i.upper() for i in indicators])
+    use_sma       = params.get("use_sma", ("SMA" in [i.upper() for i in indicators]) or ("EMA" in [i.upper() for i in indicators]))
+    use_sentiment = params.get("use_sentiment", False)
+
+    feat = _feature_flags(
+        use_rsi=use_rsi,
+        use_sma=use_sma,
+        use_sentiment=use_sentiment,
+        selected_indicators=indicators,
+    )
+
+    # Market context
+    market_ctx = _merge_market_context({"market": market, "region": region} if market or region else None,
+                                       asset_class or "asset")
+
+    include_history = _include_history_needed(indicators, use_rsi, use_sma)
+
+    pbar = tqdm(total=3, desc="⏳ Processing", unit="step")
+    # 1) Fetch the single symbol row
+    try:
+        row = fetch_single_symbol_quote(symbol, asset_class=asset_class,
+                                        include_history=include_history, market=market)
+    finally:
+        pbar.update(1)
+
+    if not row:
+        print(f"\n❌ Could not fetch data for {symbol}.")
+        return
+
+    # 2) Analyze single asset
+    try:
+        rec = analyze_single_asset(row, asset_class=asset_class, market_ctx=market_ctx,
+                                   feature_flags=feat, budget=budget)
+    except Exception as e:
+        log.exception("single-asset engine failed")
+        print(f"\n❌ Strategy error: {e}")
+        return
+    pbar.update(1)
+
+    # 3) Print recommendation
+    try:
+        now = datetime.now(LOCAL_TZ)
+        print_header(f"Single-Asset Recommendation ({now.strftime('%H:%M %Z')})")
+        print_table(
+            headers=["Asset", "Action", "Confidence", "Buy $", "Target $", "Stop $", "Key Reasons"],
+            rows=[[
+                str(rec.get("asset", symbol)),
+                rec.get("action","Hold"),
+                f"{float(rec.get('confidence',0.0))*100:.0f}%",
+                f"{float(rec.get('price',0.0)):.2f}",
+                f"{float(rec.get('sell_target',0.0)):.2f}",
+                f"{float(rec.get('stop_loss',0.0)):.2f}",
+                "; ".join(rec.get("key_reasons", [])[:4]),
+            ]]
+        )
+    finally:
+        pbar.update(1)
+        pbar.close()
+
+    # Persist
+    log_trade(
+        market_type=f"single:{asset_class}",
+        budget=budget,
+        recommendations=[rec],
+        features={
+            "RSI": use_rsi, "SMA": use_sma, "Sentiment": use_sentiment,
+            "Indicators": indicators, "Timeframes": timeframes
+        },
+    )
+
+
+# ────────────────────────────────────────────────────────────
+# Entry point
+# ────────────────────────────────────────────────────────────
+def main() -> None:
+    # Warm up markets config (for tz/sessions/labels); non-fatal on error
+    try:
+        load_markets_config()
+    except Exception as e:
+        log.warning("Could not load markets.yml: %s", e)
+
+    mode = prompt_main_mode()  # "category" or "single_asset"
+    if mode == "single_asset":
+        return run_single_asset_flow()
+    return run_category_flow()
+
+
+if __name__ == "__main__":
+    main()
