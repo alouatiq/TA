@@ -230,42 +230,17 @@ def run_category_flow() -> None:
     # Show data source disclaimer
     show_data_source_disclaimer()
     
-    # Feature selection
-    use_all = ask_use_all_features()
+    # Feature selection with enhanced individual options
+    from .terminal_ui import get_feature_configuration
     
-    if use_all:
-        use_rsi = use_sma = use_sentiment = True
-        selected_inds = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
-        print("🎯 Using ALL features and indicators for comprehensive analysis!")
-        
-        # Show detailed feature status
-        print("─" * 44)
-        print("💭 Sentiment Analysis Components:")
-        print("   News Headlines: ✅ Enabled")
-        print("   Social Media: ✅ Enabled") 
-        print("   Fear & Greed Index: ✅ Enabled")
-        print("─" * 44)
-        print("📊 Technical Indicators Status:")
-        for indicator in selected_inds:
-            print(f"   {indicator}: ✅ Enabled")
-        print("─" * 44)
-        print(f"Total Indicators Active: {len(selected_inds)} of {len(selected_inds)} technical")
-        print("Sentiment Components Active: 3 of 3 components")
-        print("─" * 44)
-        
-    else:
-        print("🔧 Configuring individual features...")
-        use_rsi = ask_use_rsi()
-        use_sma = ask_use_sma()
-        use_sentiment = ask_use_sentiment()
-        selected_inds = []
-        
-        if use_rsi:
-            selected_inds.extend(["RSI"])
-        if use_sma:
-            selected_inds.extend(["SMA", "EMA"])
-        
-        print(f"📊 Selected indicators: {', '.join(selected_inds) if selected_inds else 'None'}")
+    feature_config = get_feature_configuration()
+    
+    use_all = feature_config["use_all"]
+    use_rsi = feature_config["use_rsi"]
+    use_sma = feature_config["use_sma"]
+    use_sentiment = feature_config["use_sentiment"]
+    selected_inds = feature_config["selected_indicators"]
+    sentiment_components = feature_config.get("sentiment_components", [])
 
     # Category and budget selection
     category = get_user_choice()
