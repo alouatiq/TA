@@ -176,29 +176,81 @@ def _feature_flags(use_rsi: bool, use_sma: bool, use_sentiment: bool,
 
 
 def _print_recommendations(recs: List[Dict], title: str = "Recommendations") -> None:
-    """Print recommendations in a formatted table."""
+    """Print day trading recommendations in a formatted table."""
     if not recs:
         print(f"\n❌ No {title.lower()} available.")
         return
     
     print_header(title)
     
-    # Prepare table data
-    headers = ["Asset", "Action", "Confidence", "Price $", "Target $", "Stop $", "Key Reasons"]
+    # Filter to only show Buy/Sell recommendations (the actionable ones)
+    actionable_recs = [r for r in recs if r.get("action") in ["Buy", "Sell"]]
+    
+    if not actionable_recs:
+        print("📊 No strong trading signals found today. Markets may be ranging or unclear.")
+        print("💡 Consider waiting for clearer opportunities or checking other categories.")
+        return
+    
+    # Show detailed trading information
+    for i, rec in enumerate(actionable_recs[:5], 1):  # Top 5 opportunities
+        asset = rec.get("asset", "Unknown")
+        action = rec.get("action", "Hold")
+        confidence = rec.get("confidence", 0)
+        
+        print(f"\n🎯 TRADE OPPORTUNITY #{i}")
+        print("─" * 40)
+        print(f"💰 Asset: {asset}")
+        print(f"📈 Action: {action.upper()}")
+        print(f"🎲 Confidence: {confidence}%")
+        print(f"💵 Entry Price: ${rec.get('price', 0):.4f}")
+        print(f"🎯 Target Price: ${rec.get('sell_target', 0):.4f}")
+        print(f"🛑 Stop Loss: ${rec.get('stop_loss', 0):.4f}")
+        print(f"⏰ Entry Time: {rec.get('entry_time', 'Now')}")
+        print(f"⏰ Exit Time: {rec.get('exit_time', 'TBD')}")
+        print(f"⏱️  Holding Period: {rec.get('holding_period', 'N/A')}")
+        print(f"💎 Position Size: {rec.get('quantity', 0):.6f} units")
+        print(f"💰 Position Value: ${rec.get('position_value', 0):.2f}")
+        print(f"📊 Expected Profit: ${rec.get('expected_profit', 0):.2f} ({rec.get('profit_pct', 0):.1f}%)")
+        print(f"⚠️  Max Loss: ${rec.get('max_loss', 0):.2f}")
+        print(f"📝 Reasoning: {rec.get('reasons', 'No reason provided')}")
+        
+        if i < len(actionable_recs):
+            print()
+    
+    # Summary table
+    print(f"\n📋 SUMMARY - TOP {len(actionable_recs)} OPPORTUNITIES")
+    print("─" * 80)
+    
+    headers = ["#", "Asset", "Action", "Entry $", "Target $", "Profit $", "Time", "Confidence"]
     rows = []
     
-    for rec in recs[:10]:  # Limit to top 10
-        asset = str(rec.get("asset", "N/A"))
-        action = rec.get("action", "Hold")
-        confidence = f"{rec.get('confidence', 0)}%"
-        price = f"{rec.get('price', 0.0):.2f}"
-        target = f"{rec.get('sell_target', 0.0):.2f}" if rec.get('sell_target', 0.0) > 0 else "-"
-        stop = f"{rec.get('stop_loss', 0.0):.2f}" if rec.get('stop_loss', 0.0) > 0 else "-"
-        reasons = str(rec.get("reasons", ""))[:50] + ("..." if len(str(rec.get("reasons", ""))) > 50 else "")
+    total_expected_profit = 0
+    for i, rec in enumerate(actionable_recs[:5], 1):
+        expected_profit = rec.get("expected_profit", 0)
+        total_expected_profit += expected_profit
         
-        rows.append([asset, action, confidence, price, target, stop, reasons])
+        rows.append([
+            str(i),
+            str(rec.get("asset", ""))[:10],
+            rec.get("action", ""),
+            f"${rec.get('price', 0):.3f}",
+            f"${rec.get('sell_target', 0):.3f}",
+            f"${expected_profit:.0f}",
+            rec.get("exit_time", ""),
+            f"{rec.get('confidence', 0)}%"
+        ])
     
     print_table(headers, rows)
+    print("─" * 80)
+    print(f"💰 TOTAL EXPECTED PROFIT: ${total_expected_profit:.2f}")
+    print(f"📈 Average Confidence: {sum(r.get('confidence', 0) for r in actionable_recs) / len(actionable_recs):.0f}%")
+    
+    # Trading tips
+    print(f"\n💡 DAY TRADING TIPS:")
+    print("   • Set stop losses immediately after entry")
+    print("   • Monitor positions closely during market hours")
+    print("   • Take profits at target prices - don't get greedy")
+    print("   • Never risk more than 2% of your account per trade")
 
 
 def _print_diagnostics(category: str) -> None:
