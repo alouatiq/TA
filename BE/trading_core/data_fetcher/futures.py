@@ -1,39 +1,66 @@
 # BE/trading_core/data_fetcher/futures.py
 """
-Index futures / index cash proxies (market-aware)
+Index futures / index cash proxies (market-aware, config-driven)
 
-Discovery:
-  • Prefer a market’s primary cash indices (Yahoo: ^GSPC, ^FTSE, ^GDAXI, …)
-  • Add a compact global futures set (ES=F, NQ=F, YM=F, RTY=F, NK=F, HSI=F, VX=F)
-  • Allow explicit symbol overrides via `symbols=[...]`
+Discovery order
+---------------
+1) If `symbols=[...]` provided → use exactly those.
+2) If `market` provided:
+   - Try trading_core.config.get_market_info(market) and look for:
+       • "primary_indices" (preferred) OR "indices" (list of Yahoo cash indices)
+   - If not found there, try to read BE/trading_core/data/markets.yml
+     under markets[<market>].primary_indices / .indices
+3) If still empty, use a region default ("Americas" | "Europe" | "MEA" | "Asia").
+4) Always append a compact global futures set (ES=F, NQ=F, YM=F, RTY=F, NK=F, HSI=F, VX=F).
 
-Quotes/History:
-  • Primary: Yahoo adapter (reliable for indices & index futures)
-  • Fallback: Stooq adapter (best-effort for cash indices & many regions)
-  • (TwelveData usually doesn’t carry index futures; not used here)
+Quotes/History
+--------------
+• Primary: Yahoo adapter (reliable for indices & many index futures)
+• Fallback: Stooq adapter (best-effort for cash indices)
+• TwelveData is typically not used for index futures; omitted here.
 
-Output row per symbol:
-  {
-    "asset":  <symbol>,
-    "symbol": <symbol>,
-    "price":  float,
-    "volume": int (0 if not available),
-    "day_range_pct": float (0.0 if unavailable),
-    "price_history": [floats]  # only if include_history=True and available
-  }
+Row schema
+----------
+{
+  "asset":  <symbol>,
+  "symbol": <symbol>,
+  "price":  float,
+  "volume": int (0 if not available),
+  "day_range_pct": float (0.0 if unavailable),
+  "price_history": [floats]  # only if include_history=True and available
+}
 
-Diagnostics:
-  LAST_FUTURES_SOURCE: str
-  FAILED_FUTURES_SOURCES: List[str]
-  SKIPPED_FUTURES_SOURCES: List[str]
+Diagnostics
+-----------
+LAST_FUTURES_SOURCE: str
+FAILED_FUTURES_SOURCES: List[str]
+SKIPPED_FUTURES_SOURCES: List[str]
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+import sys
 
+# Adapters
 from .adapters import yahoo as yq
 from .adapters import stooq as sq
+
+# Optional config/YAML loading
+try:
+    # Preferred: centralized config helper if present in your project
+    from trading_core.config import get_market_info  # type: ignore
+except Exception:  # pragma: no cover
+    get_market_info = None  # type: ignore
+
+try:
+    # Fallback: read markets.yml directly if available
+    import importlib.resources as ilres
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    ilres = None  # type: ignore
+    yaml = None   # type: ignore
+
 
 # ────────────────────────────────────────────────────────────
 # Diagnostics
@@ -44,61 +71,13 @@ SKIPPED_FUTURES_SOURCES: List[str] = []
 
 
 # ────────────────────────────────────────────────────────────
-# Universes
+# Small region defaults (used only if config/YAML give nothing)
 # ────────────────────────────────────────────────────────────
-# Primary cash indices per market (safe Yahoo tickers)
-_INDEX_BY_MARKET: Dict[str, List[str]] = {
-    # Americas
-    "NYSE":   ["^GSPC", "^DJI", "^RUT"],
-    "NASDAQ": ["^NDX", "^IXIC"],
-    "TSX":    ["^GSPTSE"],
-
-    # Europe
-    "LSE":    ["^FTSE"],
-    "XETRA":  ["^GDAXI"],
-    "EN_PA":  ["^FCHI"],
-    "BME":    ["^IBEX"],
-    "SIX":    ["^SSMI"],
-    "WSE":    ["^WIG"],   # Warsaw broad index
-    "VIE":    ["^ATX"],
-    "BVB":    ["^BETI"],  # Bucharest BET-TR or BET; BETI (total return) often present
-    "ATHEX":  ["^ATG"],   # Athens Composite
-    "OSLO":   ["^OSEAX"],
-    "OMX_STO":["^OMX"],   # Stockholm — Yahoo sometimes exposes ^OMX Stockholm 30 via ^OMXS30
-    "OMX_HEL":["^OMXH25"],# Helsinki
-    "OMX_CPH":["^OMXC25"],# Copenhagen
-    "EN_AM":  ["^AEX"],
-    "EN_BR":  ["^BFX"],   # BEL 20 proxy (may vary)
-    "EN_LI":  ["^PSI20"], # Lisbon PSI
-    "EN_DU":  ["^ISEQ"],  # Dublin ISEQ
-
-    # Middle East & Africa (best-effort availability)
-    "TADAWUL":["^TASI.SR"],
-    "JSE":    ["^J200"],  # FTSE/JSE All Share
-    "EGX":    ["^EGX30"],
-    "CSE_MA": ["^MASI"],  # Morocco All Shares
-    "NGX":    ["^NGSEINDEX"],  # NGX ASI; availability may vary
-    "NSE_KE": ["^NSE20"],
-
-    # Asia-Pacific
-    "TSE":    ["^N225"],
-    "HKEX":   ["^HSI"],
-    "ASX":    ["^AXJO"],
-    "SGX":    ["^STI"],
-    "SSE":    ["^SSEC"],
-    "SZSE":   ["^SZSC"],   # Shenzhen composite proxy (availability varies)
-    "KOSPI":  ["^KS11"],
-    "TWSE":   ["^TWII"],
-    "NSE_IN": ["^NSEI"],   # Nifty 50
-    "BSE_IN": ["^BSESN"],  # Sensex
-}
-
-# Regional defaults if a market has no direct mapping
-_INDEX_BY_REGION: Dict[str, List[str]] = {
-    "Americas": ["^GSPC", "^NDX", "^DJI"],
-    "Europe":   ["^STOXX50E", "^FTSE", "^GDAXI"],
-    "MEA":      ["^J200", "^TASI.SR", "^MASI"],
-    "Asia":     ["^N225", "^HSI", "^AXJO", "^STI"],
+_REGION_DEFAULTS: Dict[str, List[str]] = {
+    "americas": ["^GSPC", "^NDX", "^DJI"],
+    "europe":   ["^STOXX50E", "^FTSE", "^GDAXI"],
+    "mea":      ["^J200", "^TASI.SR", "^MASI"],   # best-effort availability
+    "asia":     ["^N225", "^HSI", "^AXJO", "^STI"],
 }
 
 # Compact global futures set (Yahoo)
@@ -126,34 +105,87 @@ def _dedup(seq: List[str]) -> List[str]:
     return out
 
 
+def _markets_yaml_indices(market: str) -> List[str]:
+    """
+    Try to open trading_core/data/markets.yml and pull
+    markets[market].primary_indices or .indices.
+    Returns [] if not found/unavailable.
+    """
+    if ilres is None or yaml is None:
+        return []
+    try:
+        pkg = "trading_core.data"
+        with ilres.files(pkg).joinpath("markets.yml").open("rb") as fh:
+            data = yaml.safe_load(fh) or {}
+        markets = data.get("markets", {})
+        node = markets.get(market, {}) if isinstance(markets, dict) else {}
+        for key in ("primary_indices", "indices"):
+            vals = node.get(key)
+            if isinstance(vals, list) and vals:
+                syms = [str(v).strip() for v in vals if v]
+                return [s for s in syms if s.startswith("^") or s.endswith("=F")]
+    except Exception:
+        return []
+    return []
+
+
+def _config_indices(market: str) -> List[str]:
+    """
+    Ask trading_core.config.get_market_info(market) for primary indices.
+    Expected keys:
+      • "primary_indices" (preferred) OR
+      • "indices"
+    """
+    if get_market_info is None:
+        return []
+    try:
+        mi = get_market_info(market) or {}
+        for key in ("primary_indices", "indices"):
+            vals = mi.get(key)
+            if isinstance(vals, list) and vals:
+                syms = [str(v).strip() for v in vals if v]
+                return [s for s in syms if s.startswith("^") or s.endswith("=F")]
+    except Exception:
+        return []
+    return []
+
+
+def _region_defaults(region: Optional[str]) -> List[str]:
+    if not region:
+        return []
+    key = region.strip().lower()
+    # normalize a few aliases
+    if key.startswith("amer"):
+        key = "americas"
+    elif key.startswith("euro"):
+        key = "europe"
+    elif key in {"middle east", "africa", "middle east & africa"}:
+        key = "mea"
+    elif key.startswith("asia"):
+        key = "asia"
+    return list(_REGION_DEFAULTS.get(key, []))
+
+
 def _resolve_index_symbols(
     *, market: Optional[str], region: Optional[str], symbols: Optional[List[str]]
 ) -> List[str]:
     """
-    Resolve a symbol universe:
-      1) explicit `symbols` if provided
-      2) market-specific cash indices (if available)
-      3) region fallback list (if provided)
-      4) always append a compact global futures set
+    Resolve universe using config → YAML → region defaults, then add global futures.
     """
+    base: List[str] = []
     if symbols:
         base = list(symbols)
     else:
-        base = []
         mk = (market or "").strip().upper()
-        if mk and mk in _INDEX_BY_MARKET:
-            base.extend(_INDEX_BY_MARKET[mk])
-        else:
-            rg = (region or "").strip()
-            # normalize region to our keys
-            if rg.lower().startswith("amer"):
-                base.extend(_INDEX_BY_REGION["Americas"])
-            elif rg.lower().startswith("euro"):
-                base.extend(_INDEX_BY_REGION["Europe"])
-            elif rg.lower() in {"mea", "middle east", "africa", "middle east & africa"}:
-                base.extend(_INDEX_BY_REGION["MEA"])
-            elif rg.lower().startswith("asia"):
-                base.extend(_INDEX_BY_REGION["Asia"])
+        if mk:
+            # config first
+            idx = _config_indices(mk)
+            if not idx:
+                idx = _markets_yaml_indices(mk)
+            base.extend(idx)
+
+        if not base:
+            base.extend(_region_defaults(region))
 
     # Always add a small global futures set
     base.extend(_GLOBAL_INDEX_FUTURES)
@@ -162,12 +194,14 @@ def _resolve_index_symbols(
 
 def _build_row_from_series(sym: str, series: Dict[str, Any], include_history: bool) -> Dict[str, Any]:
     """
-    Convert a Yahoo/Stooq result series -> normalized row.
+    Convert an adapter result dict -> normalized row.
+    Adapters (yahoo/stooq) return keys: price/close, high, low, volume, history?
     """
     price = float(series.get("close") or series.get("price") or 0.0)
     high  = series.get("high")
     low   = series.get("low")
     vol   = series.get("volume")
+
     try:
         volume = int(vol) if vol is not None else 0
     except Exception:
@@ -197,17 +231,16 @@ def _build_row_from_series(sym: str, series: Dict[str, Any], include_history: bo
 
 def _fetch_one_symbol(sym: str, *, include_history: bool) -> Optional[Dict[str, Any]]:
     """
-    Try Yahoo first (supports indices & futures) → Stooq fallback.
+    Try Yahoo (supports indices & many futures) → Stooq fallback (cash indices).
     """
-    # Yahoo
+    # Yahoo first
     ya = yq.get_history(sym, lookback_days=16, with_intraday=False)
-    if ya and ya.get("close") is not None:
+    if ya and (ya.get("close") is not None or ya.get("price") is not None):
         return _build_row_from_series(sym, ya, include_history)
 
-    # Stooq fallback (often works for cash indices; futures coverage varies)
+    # Stooq fallback (history not provided in our helper)
     st = sq.get_quote(sym)
-    if st and st.get("close") is not None:
-        # Stooq doesn't provide history in our helper; row will be price-only unless Yahoo worked
+    if st and (st.get("close") is not None or st.get("price") is not None):
         return _build_row_from_series(sym, st, include_history=False)
 
     return None
@@ -230,9 +263,9 @@ def fetch_futures_data(
     Parameters
     ----------
     include_history : bool
-        If True, attach last ~15 closes where possible (Yahoo path).
+        If True, attach ~15 closes where possible (Yahoo path).
     market : Optional[str]
-        Exchange key (e.g., "LSE", "NYSE", "TSE"); used to select cash indices.
+        Exchange key (e.g., "LSE", "NYSE", "TSE"); used to select cash indices from config/YAML.
     region : Optional[str]
         Region hint for fallback universes: "Americas", "Europe", "MEA", "Asia".
     symbols : Optional[List[str]]
@@ -243,7 +276,7 @@ def fetch_futures_data(
     Returns
     -------
     List[dict]
-        Normalized rows suitable for indicator pipeline.
+        Normalized rows suitable for downstream indicators.
     """
     global LAST_FUTURES_SOURCE, FAILED_FUTURES_SOURCES, SKIPPED_FUTURES_SOURCES
     FAILED_FUTURES_SOURCES = []
@@ -260,15 +293,15 @@ def fetch_futures_data(
         row = _fetch_one_symbol(sym, include_history=include_history)
         if row:
             rows.append(row)
-            # mark which provider succeeded (best-effort via simple probe)
-            # Yahoo path returns history field when include_history True
-            if "price_history" in row or sym in yq._YF_QUOTE_CACHE:  # type: ignore[attr-defined]
+            # Heuristic: if we have price_history on include_history, it likely came from Yahoo
+            if include_history and "price_history" in row:
                 used_yahoo = True
             else:
-                used_stooq = True
+                # Could still be Yahoo (price-only); mark both best-effort
+                used_yahoo = True if not used_yahoo else used_yahoo
+                used_stooq = True  # some may have come from Stooq
 
     if rows:
-        # Label the primary used source(s)
         if used_yahoo and used_stooq:
             LAST_FUTURES_SOURCE = "Yahoo + Stooq"
         elif used_yahoo:
@@ -278,10 +311,9 @@ def fetch_futures_data(
         else:
             LAST_FUTURES_SOURCE = "Unknown"
     else:
-        FAILED_FUTURES_SOURCES.append("Yahoo")
-        FAILED_FUTURES_SOURCES.append("Stooq")
+        FAILED_FUTURES_SOURCES.extend(["Yahoo", "Stooq"])
 
-    # If too few assets, signal failure to upstream
+    # Enforce minimum asset count
     if len(rows) < max(1, min_assets):
         return []
 
