@@ -253,8 +253,9 @@ def is_market_open(market_key: str) -> bool:
 
 
 # ────────────────────────────────────────────────────────────
-# Environment and API key management
+# API Key Management
 # ────────────────────────────────────────────────────────────
+
 def load_api_keys() -> Dict[str, Optional[str]]:
     """Load API keys from environment variables."""
     return {
@@ -272,9 +273,172 @@ def get_api_key(service: str) -> Optional[str]:
     return keys.get(f"{service.upper()}_API_KEY")
 
 
+def validate_api_keys() -> Dict[str, bool]:
+    """
+    Validate which API keys are properly configured.
+    
+    Returns:
+        Dict mapping service names to boolean availability status
+    """
+    keys = load_api_keys()
+    return {
+        "TwelveData": bool(keys.get("TWELVEDATA_API_KEY", "").strip()),
+        "CryptoCompare": bool(keys.get("CRYPTOCOMPARE_API_KEY", "").strip()),
+        "OpenAI": bool(keys.get("OPENAI_API_KEY", "").strip()),
+        "Anthropic": bool(keys.get("ANTHROPIC_API_KEY", "").strip()),
+        "Alpha Vantage": bool(keys.get("ALPHA_VANTAGE_API_KEY", "").strip()),
+    }
+
+
+def get_missing_api_keys() -> List[str]:
+    """Get list of API services that are not configured."""
+    validation = validate_api_keys()
+    return [service for service, configured in validation.items() if not configured]
+
+
+def has_financial_api_keys() -> bool:
+    """Check if at least one financial data API is configured."""
+    validation = validate_api_keys()
+    financial_apis = ["TwelveData", "CryptoCompare", "Alpha Vantage"]
+    return any(validation.get(api, False) for api in financial_apis)
+
+
+def has_ai_api_keys() -> bool:
+    """Check if at least one AI API is configured."""
+    validation = validate_api_keys()
+    ai_apis = ["OpenAI", "Anthropic"]
+    return any(validation.get(api, False) for api in ai_apis)
+
+
+def get_api_configuration_summary() -> Dict[str, Any]:
+    """
+    Get a comprehensive summary of API configuration status.
+    
+    Returns:
+        Dict with configuration summary including counts and recommendations
+    """
+    validation = validate_api_keys()
+    financial_apis = ["TwelveData", "CryptoCompare", "Alpha Vantage"]
+    ai_apis = ["OpenAI", "Anthropic"]
+    
+    financial_configured = sum(1 for api in financial_apis if validation.get(api, False))
+    ai_configured = sum(1 for api in ai_apis if validation.get(api, False))
+    total_configured = financial_configured + ai_configured
+    
+    return {
+        "total_configured": total_configured,
+        "total_available": len(validation),
+        "financial_configured": financial_configured,
+        "financial_available": len(financial_apis),
+        "ai_configured": ai_configured,
+        "ai_available": len(ai_apis),
+        "missing_apis": get_missing_api_keys(),
+        "has_financial": has_financial_api_keys(),
+        "has_ai": has_ai_api_keys(),
+        "validation": validation,
+        "status": _get_configuration_status(total_configured, len(validation))
+    }
+
+
+def _get_configuration_status(configured_count: int, total_count: int) -> str:
+    """Determine configuration status based on API counts."""
+    if configured_count == 0:
+        return "none"
+    elif configured_count == total_count:
+        return "complete"
+    elif configured_count >= total_count * 0.6:
+        return "good"
+    else:
+        return "partial"
+
+
 # ────────────────────────────────────────────────────────────
-# Debug helpers
+# Enhanced debug and validation helpers
 # ────────────────────────────────────────────────────────────
+
+def validate_environment() -> Dict[str, Any]:
+    """
+    Comprehensive environment validation for startup checks.
+    
+    Returns:
+        Dict with validation results for markets, seeds, and APIs
+    """
+    validation_results = {
+        "markets": {"available": False, "count": 0, "error": None},
+        "seeds": {"available": False, "count": 0, "error": None},
+        "apis": get_api_configuration_summary(),
+        "paths": {
+            "repo_root": str(_repo_root()),
+            "data_dir": str(_data_dir()),
+            "markets_file": str(_data_dir() / "markets.yml"),
+            "seeds_file": str(_data_dir() / "seeds.yml"),
+        }
+    }
+    
+    # Validate markets configuration
+    try:
+        markets = _markets_yaml()
+        validation_results["markets"]["available"] = bool(markets)
+        validation_results["markets"]["count"] = len(markets)
+        if not markets:
+            validation_results["markets"]["error"] = "No markets found in configuration"
+    except Exception as e:
+        validation_results["markets"]["error"] = str(e)
+    
+    # Validate seeds configuration
+    try:
+        seeds = _seeds_yaml()
+        validation_results["seeds"]["available"] = bool(seeds)
+        validation_results["seeds"]["count"] = len(seeds) if isinstance(seeds, dict) else 0
+        if not seeds:
+            validation_results["seeds"]["error"] = "No seeds found in configuration"
+    except Exception as e:
+        validation_results["seeds"]["error"] = str(e)
+    
+    return validation_results
+
+
+def print_environment_status() -> None:
+    """Print comprehensive environment status for debugging."""
+    print("🔍 Environment Validation Results")
+    print("=" * 50)
+    
+    validation = validate_environment()
+    
+    # Markets status
+    markets = validation["markets"]
+    if markets["available"]:
+        print(f"✅ Markets: {markets['count']} markets loaded")
+    else:
+        print(f"❌ Markets: {markets.get('error', 'Unknown error')}")
+    
+    # Seeds status
+    seeds = validation["seeds"]
+    if seeds["available"]:
+        print(f"✅ Seeds: {seeds['count']} seed groups loaded")
+    else:
+        print(f"❌ Seeds: {seeds.get('error', 'Unknown error')}")
+    
+    # API status
+    api_summary = validation["apis"]
+    status_icons = {
+        "complete": "✅",
+        "good": "✅", 
+        "partial": "⚠️",
+        "none": "❌"
+    }
+    icon = status_icons.get(api_summary["status"], "❓")
+    print(f"{icon} APIs: {api_summary['total_configured']}/{api_summary['total_available']} configured")
+    
+    # Paths
+    print(f"\n📁 Paths:")
+    paths = validation["paths"]
+    print(f"  Repo root: {paths['repo_root']}")
+    print(f"  Data dir: {paths['data_dir']}")
+    print(f"  Markets file: {paths['markets_file']}")
+    print(f"  Seeds file: {paths['seeds_file']}")
+
+
 def debug_paths() -> None:
     """Print path resolution for debugging."""
     print(f"[D] Config file location: {Path(__file__).resolve()}")
@@ -282,15 +446,50 @@ def debug_paths() -> None:
     print(f"[D] Data directory: {_data_dir()}")
     print(f"[D] Markets.yml path: {_data_dir() / 'markets.yml'}")
     print(f"[D] Markets.yml exists: {(_data_dir() / 'markets.yml').exists()}")
+    print(f"[D] Seeds.yml path: {_data_dir() / 'seeds.yml'}")
+    print(f"[D] Seeds.yml exists: {(_data_dir() / 'seeds.yml').exists()}")
+    
+    # Test loading
+    print("\n[D] Testing configuration loading...")
+    try:
+        markets = _markets_yaml()
+        print(f"[D] Markets loaded: {len(markets)} entries")
+        if markets:
+            sample_key = list(markets.keys())[0]
+            print(f"[D] Sample market: {sample_key} -> {markets[sample_key].get('label', 'No label')}")
+    except Exception as e:
+        print(f"[E] Markets loading error: {e}")
+    
+    try:
+        seeds = _seeds_yaml()
+        print(f"[D] Seeds loaded: {len(seeds)} entries")
+        if seeds:
+            print(f"[D] Seed categories: {list(seeds.keys())}")
+    except Exception as e:
+        print(f"[E] Seeds loading error: {e}")
+    
+    # API status
+    print("\n[D] API Configuration:")
+    validation = validate_api_keys()
+    for service, configured in validation.items():
+        status = "✅ Configured" if configured else "❌ Missing"
+        print(f"[D] {service}: {status}")
 
 
 if __name__ == "__main__":
     # Debug mode when run directly
     debug_paths()
-    try:
-        markets = load_markets_config()
-        print(f"[D] Successfully loaded {len(markets)} markets")
-        if markets:
-            print("[D] Available markets:", list(markets.keys())[:5], "...")
-    except Exception as e:
-        print(f"[E] Error: {e}")
+    print("\n" + "─" * 50)
+    print_environment_status()
+    
+    # Show API configuration summary
+    print("\n" + "─" * 50)
+    api_summary = get_api_configuration_summary()
+    print(f"📊 API Summary: {api_summary['status']} configuration")
+    print(f"   Financial APIs: {api_summary['financial_configured']}/{api_summary['financial_available']}")
+    print(f"   AI APIs: {api_summary['ai_configured']}/{api_summary['ai_available']}")
+    
+    if api_summary['missing_apis']:
+        print(f"   Missing: {', '.join(api_summary['missing_apis'])}")
+    else:
+        print("   🎉 All APIs configured!")
