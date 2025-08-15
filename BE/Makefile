@@ -37,13 +37,13 @@ $(VENV_DIR):
 	@$(PYTHON_BIN) -m venv $(VENV_DIR)
 	@echo "✅ Virtual environment created"
 
-# Install marker file - only reinstall if requirements.txt is newer
-$(VENV_DIR)/.installed: $(VENV_DIR) requirements.txt
-	@echo "📦 Installing/updating requirements (requirements.txt changed)"
+# Install marker file - only reinstall if requirements-cli.txt is newer
+$(VENV_DIR)/.installed: $(VENV_DIR) requirements-cli.txt
+	@echo "📦 Installing/updating CLI requirements (requirements-cli.txt changed)"
 	@$(PIP) install --upgrade pip -q
-	@$(PIP) install -r requirements.txt -q
+	@$(PIP) install -r requirements-cli.txt -q
 	@touch $(VENV_DIR)/.installed
-	@echo "✅ Packages installed successfully"
+	@echo "✅ CLI packages installed successfully"
 
 setup: $(VENV_DIR)/.installed  ## Create venv & install deps (only if needed)
 	@echo "✅ Setup complete!"
@@ -52,9 +52,9 @@ install: $(VENV_DIR)/.installed  ## Install/upgrade Python packages (only if nee
 
 # Force reinstall (ignores timestamps)
 force-install: $(VENV_DIR)      ## Force reinstall packages
-	@echo "🔄 Force reinstalling packages from requirements.txt..."
+	@echo "🔄 Force reinstalling CLI packages from requirements-cli.txt..."
 	@$(PIP) install --upgrade pip
-	@$(PIP) install -r requirements.txt --force-reinstall
+	@$(PIP) install -r requirements-cli.txt --force-reinstall
 	@touch $(VENV_DIR)/.installed
 
 # ------------------------------------------------------------------
@@ -79,8 +79,8 @@ test: $(VENV_DIR)/.installed    ## Run pytest
 # ------------------------------------------------------------------
 
 freeze: $(VENV_DIR)/.installed  ## Export locked requirements
-	@echo "🔌 Writing locked requirements to requirements.lock"
-	@$(PIP) freeze > requirements.lock
+	@echo "🔌 Writing locked CLI requirements to requirements-cli.lock"
+	@$(PIP) freeze > requirements-cli.lock
 
 dev-install: $(VENV_DIR)       ## Install package in development mode
 	@echo "🔧 Installing package in development mode..."
@@ -128,7 +128,7 @@ status:                         ## Show current environment status
 	@echo "  Venv: $(shell [ -d $(VENV_DIR) ] && echo '✅ Exists' || echo '❌ Missing')"
 	@echo "  Packages: $(shell [ -f $(VENV_DIR)/.installed ] && echo '✅ Installed' || echo '❌ Not installed')"
 	@echo "  .env: $(shell [ -f .env ] && echo '✅ Exists' || echo '❌ Missing')"
-	@echo "  Requirements: $(shell [ -f requirements.txt ] && echo '✅ Exists' || echo '❌ Missing')"
+	@echo "  CLI Requirements: $(shell [ -f requirements-cli.txt ] && echo '✅ Exists' || echo '❌ Missing')"
 
 clean:                          ## Remove logs & caches (keeps venv)
 	@echo "🧹 Cleaning workspace (keeping venv)..."
@@ -185,20 +185,23 @@ info:                           ## Show system and project info
 	@echo "  Directory: $(PWD)"
 	@echo "  Venv path: $(VENV_DIR)"
 	@echo "  Python path: $(PY)"
-	@echo "  Requirements: $(shell [ -f requirements.txt ] && wc -l < requirements.txt || echo '0') packages"
+	@echo "  CLI Requirements: $(shell [ -f requirements-cli.txt ] && wc -l < requirements-cli.txt || echo '0') packages"
 
 help:                           ## Show this help message
 	@echo ""
-	@echo "Trading Assistant Backend - Available Commands:"
-	@echo "=============================================="
+	@echo "Trading Assistant Backend CLI - Available Commands:"
+	@echo "=================================================="
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) \
-	| sort | awk 'BEGIN{FS=":.*?##"}{printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	| sort | awk 'BEGIN{FS=":.*?##"}{printf "\033[36m%-20s\033[0m %s\n", $1, $2}'
 	@echo ""
 	@echo "Examples:"
 	@echo "  make run                     # Start with default settings"
 	@echo "  make run ARGS=\"--help\"       # Show CLI help"
 	@echo "  make setup                   # First-time setup"
 	@echo "  make clean && make setup     # Clean reinstall"
+	@echo "  make status                  # Check environment health"
+	@echo ""
+	@echo "Note: Uses requirements-cli.txt for backend CLI dependencies"
 	@echo ""
 
 # ------------------------------------------------------------------
