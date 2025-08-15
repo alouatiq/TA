@@ -44,9 +44,20 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 # Adapters (we built these in adapters/)
-from .adapters.coingecko import CoinGeckoClient
-from .adapters.cryptocompare import CryptoCompareClient
-from .adapters.twelvedata import TwelveDataClient
+try:
+    from .adapters.coingecko import CoinGeckoAdapter as CoinGeckoClient
+except ImportError:
+    CoinGeckoClient = None
+
+try:
+    from .adapters.cryptocompare import CryptoCompareAdapter as CryptoCompareClient
+except ImportError:
+    CryptoCompareClient = None
+
+try:
+    from .adapters.twelvedata import TwelveDataAdapter as TwelveDataClient  
+except ImportError:
+    TwelveDataClient = None
 
 REQUEST_TIMEOUT = 15
 DEFAULT_LIMIT = 20
