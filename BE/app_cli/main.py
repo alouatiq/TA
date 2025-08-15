@@ -246,9 +246,24 @@ def run_category_flow() -> None:
     category = get_user_choice()
     budget = get_user_budget()
     
-    # Market/region selection
-    market_selection = get_market_selection_details()
-    market_ctx = _merge_market_context(market_selection, category)
+    # Market/region selection - ONLY for region-dependent categories
+    market_selection = {}
+    market_ctx = _merge_market_context(None, category)
+    
+    # Only ask for market selection for region-dependent categories
+    region_dependent_categories = ["equities", "commodities", "futures", "warrants", "funds"]
+    
+    if category in region_dependent_categories:
+        print(f"\n📍 {category.title()} are region-specific. Please select your target market:")
+        market_selection = get_market_selection_details()
+        market_ctx = _merge_market_context(market_selection, category)
+    else:
+        if category == "crypto":
+            print(f"\n🌍 Cryptocurrency markets are global and trade 24/7.")
+        elif category == "forex":
+            print(f"\n🌍 Forex markets are global and trade 24/7.")
+        print("   No region selection needed - proceeding with global analysis.")
+        market_ctx = _merge_market_context(None, category)
     
     # Data fetching with progress bar
     pbar = tqdm(total=3, desc="⏳ Processing")
@@ -269,11 +284,14 @@ def run_category_flow() -> None:
         fetcher = fetcher_map.get(category)
         if fetcher:
             fetch_kwargs = {"include_history": True}
-            if market_selection and market_selection.get("market"):
-                fetch_kwargs["market"] = market_selection["market"]
-            if market_selection and market_selection.get("region"):
-                fetch_kwargs["region"] = market_selection["region"]
-                
+            
+            # Only add market/region parameters for region-dependent categories
+            if category in region_dependent_categories and market_selection:
+                if market_selection.get("market"):
+                    fetch_kwargs["market"] = market_selection["market"]
+                if market_selection.get("region"):
+                    fetch_kwargs["region"] = market_selection["region"]
+                    
             rows = fetcher(**fetch_kwargs)
         else:
             log.error(f"Unknown category: {category}")
