@@ -157,7 +157,202 @@ def ask_use_all_features() -> bool:
         print("Please enter 'y' for yes or 'n' for no.")
 
 
+def ask_individual_indicators() -> List[str]:
+    """Ask user to select individual technical indicators."""
+    print("\n📊 Select Technical Indicators:")
+    print("Choose which indicators to enable (you can select multiple):")
+    
+    indicators = [
+        ("SMA", "Simple Moving Average - trend following"),
+        ("EMA", "Exponential Moving Average - responsive trend"),
+        ("MACD", "Moving Average Convergence Divergence - momentum"),
+        ("ADX", "Average Directional Index - trend strength"),
+        ("RSI", "Relative Strength Index - momentum oscillator"),
+        ("STOCH", "Stochastic Oscillator - momentum"),
+        ("OBV", "On-Balance Volume - volume analysis"),
+        ("BBANDS", "Bollinger Bands - volatility"),
+        ("ATR", "Average True Range - volatility measure"),
+    ]
+    
+    selected = []
+    
+    for i, (code, description) in enumerate(indicators, 1):
+        print(f"  {i}. {code} - {description}")
+    
+    print("\nSelect indicators:")
+    print("  • Enter numbers separated by commas (e.g., 1,3,5)")
+    print("  • Enter 'all' for all indicators")
+    print("  • Enter 'none' for no technical indicators")
+    
+    while True:
+        choice = input("Your selection: ").strip().lower()
+        
+        if choice == "all":
+            selected = [code for code, _ in indicators]
+            break
+        elif choice == "none":
+            selected = []
+            break
+        elif choice:
+            try:
+                # Parse comma-separated numbers
+                numbers = [int(x.strip()) for x in choice.split(",")]
+                selected = []
+                for num in numbers:
+                    if 1 <= num <= len(indicators):
+                        selected.append(indicators[num-1][0])
+                    else:
+                        raise ValueError(f"Number {num} is out of range")
+                break
+            except (ValueError, IndexError) as e:
+                print(f"❌ Invalid selection: {e}")
+                print("Please enter numbers 1-9 separated by commas, 'all', or 'none'")
+        else:
+            print("Please make a selection.")
+    
+    if selected:
+        print(f"✅ Selected indicators: {', '.join(selected)}")
+    else:
+        print("ℹ️  No technical indicators selected")
+    
+    return selected
+
+
+def ask_sentiment_components() -> List[str]:
+    """Ask user to select individual sentiment components."""
+    print("\n💭 Select Sentiment Analysis Components:")
+    
+    components = [
+        ("news", "News Headlines Analysis"),
+        ("social", "Social Media Sentiment"),
+        ("fear_greed", "Fear & Greed Index"),
+    ]
+    
+    selected = []
+    
+    for i, (code, description) in enumerate(components, 1):
+        print(f"  {i}. {description}")
+    
+    print("\nSelect sentiment components:")
+    print("  • Enter numbers separated by commas (e.g., 1,3)")
+    print("  • Enter 'all' for all components")
+    print("  • Enter 'none' for no sentiment analysis")
+    
+    while True:
+        choice = input("Your selection: ").strip().lower()
+        
+        if choice == "all":
+            selected = [code for code, _ in components]
+            break
+        elif choice == "none":
+            selected = []
+            break
+        elif choice:
+            try:
+                numbers = [int(x.strip()) for x in choice.split(",")]
+                selected = []
+                for num in numbers:
+                    if 1 <= num <= len(components):
+                        selected.append(components[num-1][0])
+                    else:
+                        raise ValueError(f"Number {num} is out of range")
+                break
+            except (ValueError, IndexError) as e:
+                print(f"❌ Invalid selection: {e}")
+                print("Please enter numbers 1-3 separated by commas, 'all', or 'none'")
+        else:
+            print("Please make a selection.")
+    
+    if selected:
+        print(f"✅ Selected sentiment components: {', '.join(selected)}")
+    else:
+        print("ℹ️  No sentiment analysis selected")
+    
+    return selected
+
+
+def configure_individual_features() -> Dict[str, any]:
+    """Configure features individually with detailed selection."""
+    print("🔧 Configuring individual features...")
+    
+    # Get technical indicators
+    selected_indicators = ask_individual_indicators()
+    
+    # Get sentiment components
+    sentiment_components = ask_sentiment_components()
+    
+    # Legacy compatibility flags
+    use_rsi = "RSI" in selected_indicators
+    use_sma = "SMA" in selected_indicators or "EMA" in selected_indicators
+    use_sentiment = len(sentiment_components) > 0
+    
+    # Show summary
+    print("\n" + "─" * 50)
+    print("📋 Configuration Summary:")
+    if selected_indicators:
+        print(f"   📊 Technical Indicators: {', '.join(selected_indicators)}")
+    else:
+        print("   📊 Technical Indicators: None")
+    
+    if sentiment_components:
+        print(f"   💭 Sentiment Components: {', '.join(sentiment_components)}")
+    else:
+        print("   💭 Sentiment Components: None")
+    
+    print("─" * 50)
+    
+    return {
+        "use_all": False,
+        "use_rsi": use_rsi,
+        "use_sma": use_sma,
+        "use_sentiment": use_sentiment,
+        "selected_indicators": selected_indicators,
+        "sentiment_components": sentiment_components,
+    }
+
+
+def get_feature_configuration() -> Dict[str, any]:
+    """Main function to get feature configuration from user."""
+    use_all = ask_use_all_features()
+    
+    if use_all:
+        # All features enabled
+        selected_indicators = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
+        sentiment_components = ["news", "social", "fear_greed"]
+        
+        print("🎯 Using ALL features and indicators for comprehensive analysis!")
+        
+        # Show detailed feature status
+        print("─" * 44)
+        print("💭 Sentiment Analysis Components:")
+        print("   News Headlines: ✅ Enabled")
+        print("   Social Media: ✅ Enabled") 
+        print("   Fear & Greed Index: ✅ Enabled")
+        print("─" * 44)
+        print("📊 Technical Indicators Status:")
+        for indicator in selected_indicators:
+            print(f"   {indicator}: ✅ Enabled")
+        print("─" * 44)
+        print(f"Total Indicators Active: {len(selected_indicators)} of {len(selected_indicators)} technical")
+        print("Sentiment Components Active: 3 of 3 components")
+        print("─" * 44)
+        
+        return {
+            "use_all": True,
+            "use_rsi": True,
+            "use_sma": True,
+            "use_sentiment": True,
+            "selected_indicators": selected_indicators,
+            "sentiment_components": sentiment_components,
+        }
+    else:
+        # Individual configuration
+        return configure_individual_features()
+
+
+# Legacy compatibility functions (kept for backward compatibility)
 def ask_use_rsi() -> bool:
+    """Legacy function - kept for compatibility."""
     while True:
         ans = input("📊 Enable RSI (Relative Strength Index)? [Y/n]: ").strip().lower()
         if ans in {"", "y", "yes"}:
@@ -168,6 +363,7 @@ def ask_use_rsi() -> bool:
 
 
 def ask_use_sma() -> bool:
+    """Legacy function - kept for compatibility."""
     while True:
         ans = input("📈 Enable SMA (Simple Moving Averages)? [Y/n]: ").strip().lower()
         if ans in {"", "y", "yes"}:
@@ -178,6 +374,7 @@ def ask_use_sma() -> bool:
 
 
 def ask_use_sentiment() -> bool:
+    """Legacy function - kept for compatibility."""
     while True:
         ans = input("💭 Enable Sentiment Analysis? [Y/n]: ").strip().lower()
         if ans in {"", "y", "yes"}:
@@ -185,11 +382,6 @@ def ask_use_sentiment() -> bool:
         if ans in {"n", "no"}:
             return False
         print("Please enter 'y' for yes or 'n' for no.")
-
-
-def prompt_indicator_bundle() -> Dict[str, any]:
-    """Legacy function for compatibility. Returns dict with all/selected indicators."""
-    return {"all": True, "selected": []}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
