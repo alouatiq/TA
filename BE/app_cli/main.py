@@ -39,8 +39,8 @@ from .terminal_ui import (
     prompt_single_asset_input,        # -> {symbol, asset_class, market?, region?, timeframes?, indicators?, budget?, ...}
 )
 
-# Config (for warm-up/validation)
-from trading_core.config import load_markets_config, get_market_info
+# Config (for warm-up/validation) - FIXED: Use correct imports
+from trading_core.config import get_market_info, list_markets
 
 # Data access facade
 from trading_core.data_fetcher import (
@@ -76,6 +76,10 @@ except Exception:
 # ──────────────────────────────────────────────────────────────────────────────
 ALL_TECHNICAL_INDICATORS = [
     "SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"
+]
+
+ALL_SENTIMENT_COMPONENTS = [
+    "News Headlines", "Social Media", "Fear & Greed Index"
 ]
 
 
@@ -175,6 +179,23 @@ def _include_history_needed(selected_indicators: List[str], use_rsi: bool, use_s
     return bool(use_rsi or use_sma or (techs & on))
 
 
+def _warm_up_config() -> None:
+    """
+    Warm up markets configuration. Safe to call - handles errors gracefully.
+    """
+    try:
+        # Test if we can load market info
+        markets = list_markets()
+        log.info(f"Markets config loaded successfully: {len(markets)} markets available")
+        if markets:
+            # Test loading first market info
+            first_market = markets[0]
+            info = get_market_info(first_market)
+            log.info(f"Sample market '{first_market}': {info.get('label', 'N/A')}")
+    except Exception as e:
+        log.warning(f"Could not warm up markets config: {e}")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Category (multi-asset) flow - MODIFIED TO USE ALL INDICATORS BY DEFAULT
 # ──────────────────────────────────────────────────────────────────────────────
@@ -222,11 +243,24 @@ def run_category_flow() -> None:
         selected_inds = prompt_category_indicator_selection()
 
     print_line()
-    print_kv("RSI", "✅ Enabled" if use_rsi else "❌ Disabled")
-    print_kv("SMA", "✅ Enabled" if use_sma else "❌ Disabled")
-    print_kv("Sentiment", "✅ Enabled" if use_sentiment else "❌ Disabled")
-    print_kv("Technical Indicators", ", ".join(selected_inds) if selected_inds else "❌ None")
-    print_kv("Total Indicators", f"{len(selected_inds)} of {len(ALL_TECHNICAL_INDICATORS)} available")
+    
+    # Show sentiment components status individually
+    print("💭 Sentiment Analysis Components:")
+    for component in ALL_SENTIMENT_COMPONENTS:
+        status = "✅ Enabled" if use_sentiment else "❌ Disabled"
+        print(f"   {component}: {status}")
+    
+    print_line()
+    
+    # Show each technical indicator status individually
+    print("📊 Technical Indicators Status:")
+    for indicator in ALL_TECHNICAL_INDICATORS:
+        status = "✅ Enabled" if indicator in selected_inds else "❌ Disabled"
+        print(f"   {indicator}: {status}")
+    
+    print_line()
+    print_kv("Total Indicators Active", f"{len(selected_inds)} of {len(ALL_TECHNICAL_INDICATORS)} technical")
+    print_kv("Sentiment Components Active", f"{len(ALL_SENTIMENT_COMPONENTS) if use_sentiment else 0} of {len(ALL_SENTIMENT_COMPONENTS)} components")
     print_line()
 
     category = get_user_choice()     # canonical string
@@ -381,16 +415,30 @@ def run_single_asset_flow() -> None:
     # Show what's happening
     print_header(f"Single-Asset Analysis: {symbol.upper()}")
     print_kv("Asset Class", asset_class.capitalize())
-    print_kv("Technical Indicators", ", ".join(indicators))
-    print_kv("Total Indicators", f"{len(indicators)} of {len(ALL_TECHNICAL_INDICATORS)} available")
-    print_kv("RSI Analysis", "✅ Enabled")
-    print_kv("SMA Analysis", "✅ Enabled")
-    print_kv("Sentiment Analysis", "✅ Enabled" if use_sentiment else "❌ Disabled")
     print_kv("Budget", f"${budget:.2f}")
     if market:
         print_kv("Market", market)
     if region:
         print_kv("Region", region)
+    print_line()
+    
+    # Show sentiment components status individually  
+    print("💭 Sentiment Analysis Components:")
+    for component in ALL_SENTIMENT_COMPONENTS:
+        status = "✅ Enabled" if use_sentiment else "❌ Disabled"
+        print(f"   {component}: {status}")
+    
+    print_line()
+    
+    # Show each technical indicator status individually
+    print("📊 Technical Indicators Status:")
+    for indicator in ALL_TECHNICAL_INDICATORS:
+        status = "✅ Enabled" if indicator in indicators else "❌ Disabled"
+        print(f"   {indicator}: {status}")
+    
+    print_line()
+    print_kv("Total Indicators Active", f"{len(indicators)} of {len(ALL_TECHNICAL_INDICATORS)} technical")
+    print_kv("Sentiment Components Active", f"{len(ALL_SENTIMENT_COMPONENTS) if use_sentiment else 0} of {len(ALL_SENTIMENT_COMPONENTS)} components")
     print_line()
 
     # Progress tracking
@@ -463,10 +511,7 @@ def run_single_asset_flow() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 def main() -> None:
     # Warm up markets config (for tz/sessions/labels); non-fatal on error
-    try:
-        load_markets_config()
-    except Exception as e:
-        log.warning("Could not load markets.yml: %s", e)
+    _warm_up_config()
 
     mode = prompt_main_mode()  # "category" or "single_asset"
     if mode == "single_asset":
