@@ -1,76 +1,22 @@
+# BE/trading_core/strategy/rules_engine.py
 """
 Deterministic rules engine: multi-signal → recommendation.
 
-Inputs
-------
-`recommend_for_assets(assets, category, budget, risk_per_trade, regime_hint)`
-Where each `asset` is a dict you already use throughout the app, e.g.:
+This module provides both the internal recommendation functions and the 
+API functions expected by main.py:
+- analyze_market_batch: For category flow (multiple assets)
+- analyze_single_asset: For single asset analysis
 
-{
-  "asset": "AAPL", "symbol": "AAPL", "price": 183.12, "volume": 54234123,
-  "day_range_pct": 1.8,
-  "price_history": [...],                 # optional; used upstream for RSI/SMA/etc.
-  "technical": {                          # optional; attach what you have
-      "sma_fast": 20d SMA value,
-      "sma_slow": 50d SMA value,
-      "ema_fast": 12d EMA,
-      "ema_slow": 26d EMA,
-      "macd": float,
-      "macd_signal": float,
-      "adx": float,
-      "rsi": float,
-      "stoch_k": float, "stoch_d": float,
-      "obv_slope": float,                 # normalized slope (-1..+1) if you compute it
-      "bb_pos": float,                    # position in Bollinger band [0..1]
-      "atr_pct": float,                   # ATR/Price * 100
-      "volume_spike": float               # today_vol / 20d_avg_vol
-  },
-  "fundamentals": {                       # optional
-      "pe": float, "pe_sector": float,
-      "revenue_yoy": float, "eps_yoy": float,
-      "debt_to_equity": float, "gross_margin": float,
-      # crypto-style:
-      "dev_activity": float,              # normalized 0..1
-      "tx_growth_yoy": float,             # %
-      "active_addr_growth_yoy": float,    # %
-      "token_inflation_yoy": float        # %
-  },
-  "sentiment": {                          # optional
-      "news_score": float,                # -1..+1
-      "social_score": float,              # -1..+1
-      "fear_greed": float                 # 0..100
-  },
-  "microstructure": {                     # optional
-      "order_imbalance": float,           # -1..+1
-      "liq_depth_score": float,           # 0..1
-      "whale_score": float                # -1..1
-  }
-}
+The internal functions are:
+- recommend_for_assets: Core logic for multiple assets
+- recommend_one: Core logic for single asset
 
-Outputs
--------
-List of recommendation rows the CLI can print directly:
-
-{
-  "asset": "AAPL",
-  "symbol": "AAPL",
-  "price": 183.12,
-  "quantity": 0,                          # CLI will resize to budget anyway
-  "sell_target": 188.5,
-  "stop_loss": 177.6,
-  "estimated_profit": 0.0,                # placeholder (CLI handles totals)
-  "action": "Buy" | "Sell" | "Hold",
-  "confidence": 74,                       # 0..100
-  "reasons": "Trend up (SMA/EMA, MACD>0), momentum mid-high (RSI 58), ..."
-}
-
-Design
-------
+Design:
 • Regime detection → adjust weights across buckets.
 • Each bucket returns (score: 0..100, top_notes: list of strings).
 • Weighted blend → confidence 0..100; thresholds map to Buy/Sell/Hold.
 • Risk: propose stop/target using ATR% if available, else sensible defaults.
-• Graceful degradation: missing signals simply reduce that bucket’s weight.
+• Graceful degradation: missing signals simply reduce that bucket's weight.
 
 No hard-coded tickers, regions, or markets.
 """
@@ -84,17 +30,19 @@ Number = float
 Row = Dict[str, Any]
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _safe_get(d: Optional[dict], key: str, default=None):
+    """Safely get a value from a dict that might be None."""
     if not isinstance(d, dict):
         return default
     return d.get(key, default)
 
 
 def _nz(v, default=0.0) -> float:
+    """Convert to float, handling None and NaN safely."""
     try:
         if v is None or (isinstance(v, float) and math.isnan(v)):  # NaN-safe
             return float(default)
@@ -104,20 +52,23 @@ def _nz(v, default=0.0) -> float:
 
 
 def _clamp01(x: float) -> float:
+    """Clamp value to [0, 1] range."""
     return max(0.0, min(1.0, float(x)))
 
 
 def _pct(x: float) -> int:
+    """Convert 0-1 score to 0-100 percentage."""
     return int(round(100.0 * _clamp01(x)))
 
 
 def _sign(x: float) -> int:
+    """Return sign of number: 1, 0, or -1."""
     return 1 if x > 0 else (-1 if x < 0 else 0)
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # 1) Regime detection (quick, local)
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _detect_regime(asset: Row, regime_hint: Optional[str]) -> str:
     """
@@ -130,16 +81,16 @@ def _detect_regime(asset: Row, regime_hint: Optional[str]) -> str:
     """
     if regime_hint:
         rh = regime_hint.strip().lower()
-        if rh in {"bull","bear","range","volatile"}:
+        if rh in {"bull", "bear", "range", "volatile"}:
             return rh
 
     price = _nz(asset.get("price"), 0.0)
-    tech  = asset.get("technical") or {}
+    tech = asset.get("technical") or {}
     sma_slow = _nz(_safe_get(tech, "sma_slow"), 0.0)
-    macd     = _nz(_safe_get(tech, "macd"), 0.0)
-    adx      = _nz(_safe_get(tech, "adx"), 0.0)
-    atr_pct  = _nz(_safe_get(tech, "atr_pct"), 0.0)
-    drp      = _nz(asset.get("day_range_pct"), 0.0)
+    macd = _nz(_safe_get(tech, "macd"), 0.0)
+    adx = _nz(_safe_get(tech, "adx"), 0.0)
+    atr_pct = _nz(_safe_get(tech, "atr_pct"), 0.0)
+    drp = _nz(asset.get("day_range_pct"), 0.0)
 
     # Volatility first
     if atr_pct >= 3.5 or drp >= 3.0:
@@ -156,33 +107,33 @@ def _detect_regime(asset: Row, regime_hint: Optional[str]) -> str:
     return "range"
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # 2) Bucket scoring
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _score_technical(asset: Row) -> Tuple[float, List[str]]:
-    """Return (0..1, notes)."""
+    """Return (0..1, notes) for technical analysis."""
     notes: List[str] = []
     t = asset.get("technical") or {}
     if not t:
-        return 0.0, ["No technical signals."]
+        return 0.5, ["No technical signals available."]  # Neutral when no data
 
-    price    = _nz(asset.get("price"))
-    sma_f    = _nz(_safe_get(t, "sma_fast"))
-    sma_s    = _nz(_safe_get(t, "sma_slow"))
-    ema_f    = _nz(_safe_get(t, "ema_fast"))
-    ema_s    = _nz(_safe_get(t, "ema_slow"))
-    macd     = _nz(_safe_get(t, "macd"))
-    macdsig  = _nz(_safe_get(t, "macd_signal"))
-    adx      = _nz(_safe_get(t, "adx"))
-    rsi      = _nz(_safe_get(t, "rsi"))
-    k        = _nz(_safe_get(t, "stoch_k"))
-    d        = _nz(_safe_get(t, "stoch_d"))
-    obv_sl   = _nz(_safe_get(t, "obv_slope"))
-    bb_pos   = _nz(_safe_get(t, "bb_pos"))
-    atr_pct  = _nz(_safe_get(t, "atr_pct"))
-    vol_spk  = _nz(_safe_get(t, "volume_spike"))
-    drp      = _nz(asset.get("day_range_pct"))
+    price = _nz(asset.get("price"))
+    sma_f = _nz(_safe_get(t, "sma_fast"))
+    sma_s = _nz(_safe_get(t, "sma_slow"))
+    ema_f = _nz(_safe_get(t, "ema_fast"))
+    ema_s = _nz(_safe_get(t, "ema_slow"))
+    macd = _nz(_safe_get(t, "macd"))
+    macdsig = _nz(_safe_get(t, "macd_signal"))
+    adx = _nz(_safe_get(t, "adx"))
+    rsi = _nz(_safe_get(t, "rsi"))
+    k = _nz(_safe_get(t, "stoch_k"))
+    d = _nz(_safe_get(t, "stoch_d"))
+    obv_sl = _nz(_safe_get(t, "obv_slope"))
+    bb_pos = _nz(_safe_get(t, "bb_pos"))
+    atr_pct = _nz(_safe_get(t, "atr_pct"))
+    vol_spk = _nz(_safe_get(t, "volume_spike"))
+    drp = _nz(asset.get("day_range_pct"))
 
     score = 0.0
     weight_sum = 0.0
@@ -193,13 +144,7 @@ def _score_technical(asset: Row) -> Tuple[float, List[str]]:
         trend_up = sma_f > sma_s
         score += w * (1.0 if trend_up else 0.0)
         weight_sum += w
-        notes.append(f"SMA trend {'up' if trend_up else 'down'} (fast vs slow).")
-    if ema_f and ema_s:
-        w = 0.10
-        ema_up = ema_f > ema_s
-        score += w * (1.0 if ema_up else 0.0)
-        weight_sum += w
-        notes.append(f"EMA trend {'up' if ema_up else 'down'} (fast vs slow).")
+        notes.append(f"SMA trend {'up' if trend_up else 'down'}")
 
     # MACD
     if macd or macdsig:
@@ -207,291 +152,225 @@ def _score_technical(asset: Row) -> Tuple[float, List[str]]:
         bull = macd > macdsig and macd > 0
         score += w * (1.0 if bull else 0.0)
         weight_sum += w
-        notes.append(f"MACD {'bullish' if bull else 'bearish/flat'}.")
+        notes.append(f"MACD {'bullish' if bull else 'bearish'}")
 
-    # ADX (trend strength)
-    if adx:
-        w = 0.05
-        strong = adx >= 20
-        score += w * (1.0 if strong else 0.5 if adx >= 15 else 0.0)
-        weight_sum += w
-        notes.append(f"ADX {adx:.0f} ({'strong' if strong else 'weak'} trend).")
-
-    # Momentum (RSI/Stoch)
+    # RSI (momentum)
     if rsi:
-        w = 0.15
-        if 50 <= rsi <= 70:
-            val = 0.8
-        elif 40 <= rsi < 50:
-            val = 0.5
-        elif 30 <= rsi < 40:
-            val = 0.3
-        elif rsi > 70:
-            val = 0.4  # overbought risk
+        w = 0.10
+        if rsi > 70:
+            rscore = 0.2  # Overbought
+            notes.append("RSI overbought")
+        elif rsi < 30:
+            rscore = 0.8  # Oversold (potential buy)
+            notes.append("RSI oversold")
+        elif 40 <= rsi <= 60:
+            rscore = 0.6  # Neutral-bullish
+            notes.append("RSI neutral")
         else:
-            val = 0.2  # weak/oversold (could be value, but penalize until reversal confirmed)
-        score += w * val
+            rscore = 0.5  # Moderate
+            notes.append("RSI moderate")
+        score += w * rscore
         weight_sum += w
-        notes.append(f"RSI {rsi:.0f}.")
-    if k and d:
-        w = 0.05
-        cross_up = k > d and k < 80
-        score += w * (0.7 if cross_up else 0.3)
-        weight_sum += w
-        notes.append(f"Stoch {'bullish' if cross_up else 'neutral/bear'} (K/D).")
 
-    # Volume (OBV slope + spikes)
-    if obv_sl:
-        w = 0.05
-        score += w * _clamp01((obv_sl + 1.0) / 2.0)  # map -1..1 → 0..1
-        weight_sum += w
-        notes.append("OBV slope supportive." if obv_sl > 0 else "OBV slope weak.")
+    # Volume analysis
     if vol_spk:
         w = 0.05
-        val = 1.0 if vol_spk >= 1.5 else (0.5 if vol_spk >= 1.1 else 0.2)
-        score += w * val
-        weight_sum += w
-        notes.append(f"Volume {'spike' if vol_spk >= 1.5 else 'normal'} ({vol_spk:.2f}x avg).")
-
-    # Volatility (Bollinger position + ATR%)
-    if bb_pos:
-        w = 0.05
-        # Middle band ≈ neutrally safe; near lower band can be value; near upper band risk
-        val = 0.7 if 0.35 <= bb_pos <= 0.65 else (0.5 if 0.2 <= bb_pos <= 0.8 else 0.3)
-        score += w * val
-        weight_sum += w
-        notes.append(f"BBand position {bb_pos:.2f}.")
-    if atr_pct or drp:
-        w = 0.10
-        vol = atr_pct if atr_pct else drp
-        # too high volatility penalizes; moderate gets 0.7; very low 0.5
-        if vol <= 1.5:
-            val = 0.7
-        elif vol <= 3.0:
-            val = 0.55
+        if vol_spk > 1.5:
+            vscore = 0.8  # High volume confirms moves
+            notes.append("High volume")
+        elif vol_spk < 0.5:
+            vscore = 0.3  # Low volume = weak signals
+            notes.append("Low volume")
         else:
-            val = 0.25
-        score += w * val
+            vscore = 0.5
+            notes.append("Normal volume")
+        score += w * vscore
         weight_sum += w
-        notes.append(f"Volatility {vol:.1f}% ATR/Range.")
 
-    if weight_sum == 0:
-        return 0.0, ["No technical inputs."]
-    return _clamp01(score / weight_sum), notes
+    # Simple price momentum (fallback)
+    if drp:
+        w = 0.05
+        if drp > 2:
+            pscore = 0.7  # Strong daily move
+            notes.append("Strong price move")
+        elif drp < -2:
+            pscore = 0.3  # Strong decline
+            notes.append("Strong decline")
+        else:
+            pscore = 0.5
+            notes.append("Moderate price action")
+        score += w * pscore
+        weight_sum += w
 
-
-def _score_fundamentals(asset: Row, *, category: str) -> Tuple[float, List[str]]:
-    f = asset.get("fundamentals") or {}
-    notes: List[str] = []
-    if not f:
-        return 0.5, ["No fundamentals — neutral."]  # degrade gracefully
-
-    score = 0.0
-    wsum  = 0.0
-
-    if category == "equities" or category == "stocks":
-        pe        = _nz(_safe_get(f, "pe"))
-        pe_sec    = _nz(_safe_get(f, "pe_sector"))
-        rev_yoy   = _nz(_safe_get(f, "revenue_yoy"))
-        eps_yoy   = _nz(_safe_get(f, "eps_yoy"))
-        dte       = _nz(_safe_get(f, "debt_to_equity"))
-        margin    = _nz(_safe_get(f, "gross_margin"))
-
-        # Valuation relative to sector
-        if pe and pe_sec:
-            w = 0.2
-            val = 0.7 if pe <= 0.9*pe_sec else (0.5 if pe <= 1.1*pe_sec else 0.3)
-            score += w * val; wsum += w
-            notes.append(f"P/E vs sector: {pe:.1f} vs {pe_sec:.1f}.")
-
-        # Growth
-        if rev_yoy or eps_yoy:
-            w = 0.25
-            g = 0.5
-            if rev_yoy > 5 or eps_yoy > 5:
-                g = 0.7
-            if rev_yoy > 15 or eps_yoy > 15:
-                g = 0.85
-            if rev_yoy > 30 or eps_yoy > 30:
-                g = 1.0
-            score += w * g; wsum += w
-            notes.append(f"Growth YoY (rev {rev_yoy:.1f}%, eps {eps_yoy:.1f}%).")
-
-        # Balance sheet quality
-        if dte:
-            w = 0.15
-            val = 0.75 if dte < 0.8 else (0.55 if dte < 1.5 else 0.35)
-            score += w * val; wsum += w
-            notes.append(f"Debt/Equity {dte:.2f}.")
-
-        if margin:
-            w = 0.15
-            val = 0.75 if margin >= 40 else (0.6 if margin >= 20 else 0.45)
-            score += w * val; wsum += w
-            notes.append(f"Gross margin {margin:.1f}%.")
-
+    # Normalize score
+    if weight_sum > 0:
+        score = score / weight_sum
     else:
-        # Crypto-style fundamentals / on-chain proxies
-        dev_act  = _nz(_safe_get(f, "dev_activity"))
-        tx_g     = _nz(_safe_get(f, "tx_growth_yoy"))
-        addr_g   = _nz(_safe_get(f, "active_addr_growth_yoy"))
-        infl     = _nz(_safe_get(f, "token_inflation_yoy"))
+        score = 0.5  # Neutral if no indicators
 
-        if dev_act:
-            w = 0.25
-            score += w * _clamp01(dev_act)  # already 0..1
-            wsum  += w
-            notes.append(f"Dev activity {dev_act:.2f}.")
+    return _clamp01(score), notes[:3]  # Limit notes
 
-        if tx_g or addr_g:
-            w = 0.25
-            g = 0.5
-            if tx_g > 5 or addr_g > 5:
-                g = 0.7
-            if tx_g > 15 or addr_g > 15:
-                g = 0.85
-            if tx_g > 30 or addr_g > 30:
-                g = 1.0
-            score += w * g; wsum += w
-            notes.append(f"On-chain growth (tx {tx_g:.1f}%, addr {addr_g:.1f}%).")
 
-        if infl:
-            w = 0.2
-            # lower inflation is better
-            val = 0.8 if infl <= 2 else (0.6 if infl <= 6 else 0.4)
-            score += w * val; wsum += w
-            notes.append(f"Token inflation {infl:.1f}%.")
+def _score_fundamentals(asset: Row, category: str = "") -> Tuple[float, List[str]]:
+    """Return (0..1, notes) for fundamental analysis."""
+    notes: List[str] = []
+    f = asset.get("fundamentals") or {}
+    if not f:
+        return 0.5, ["No fundamental data available."]
 
-    if wsum == 0:
-        return 0.5, ["Sparse fundamentals — neutral."]
-    return _clamp01(score / wsum), notes
+    # Simplified fundamental scoring
+    score = 0.5  # Start neutral
+    
+    # For equities
+    if category in ["equities", "stocks", "equity"]:
+        pe = _nz(_safe_get(f, "pe"))
+        revenue_yoy = _nz(_safe_get(f, "revenue_yoy"))
+        eps_yoy = _nz(_safe_get(f, "eps_yoy"))
+        
+        if pe:
+            if 10 <= pe <= 25:
+                score += 0.1
+                notes.append("Reasonable P/E")
+            elif pe > 30:
+                score -= 0.1
+                notes.append("High P/E")
+        
+        if revenue_yoy:
+            if revenue_yoy > 0.10:  # 10% growth
+                score += 0.1
+                notes.append("Strong revenue growth")
+            elif revenue_yoy < -0.05:  # -5% decline
+                score -= 0.1
+                notes.append("Revenue declining")
+
+    # For crypto
+    elif category in ["crypto", "cryptocurrencies"]:
+        dev_activity = _nz(_safe_get(f, "dev_activity"))
+        tx_growth = _nz(_safe_get(f, "tx_growth_yoy"))
+        
+        if dev_activity > 0.7:
+            score += 0.1
+            notes.append("High dev activity")
+        elif dev_activity < 0.3:
+            score -= 0.1
+            notes.append("Low dev activity")
+            
+        if tx_growth > 0.20:  # 20% transaction growth
+            score += 0.1
+            notes.append("Strong network growth")
+
+    return _clamp01(score), notes[:2]
 
 
 def _score_sentiment(asset: Row) -> Tuple[float, List[str]]:
-    s = asset.get("sentiment") or {}
-    news   = _nz(_safe_get(s, "news_score"))
-    social = _nz(_safe_get(s, "social_score"))
-    fg     = _nz(_safe_get(s, "fear_greed"))
+    """Return (0..1, notes) for sentiment analysis."""
     notes: List[str] = []
-    has_any = False
+    s = asset.get("sentiment") or {}
+    if not s:
+        return 0.5, ["No sentiment data available."]
 
-    score = 0.0
-    wsum  = 0.0
+    news_score = _nz(_safe_get(s, "news_score"))
+    social_score = _nz(_safe_get(s, "social_score"))
+    fear_greed = _nz(_safe_get(s, "fear_greed"))
 
-    if news:
-        has_any = True
-        w = 0.45
-        score += w * _clamp01((news + 1.0) / 2.0)  # -1..1 → 0..1
-        wsum  += w
-        notes.append(f"News sentiment {news:+.2f}.")
-    if social:
-        has_any = True
-        w = 0.35
-        score += w * _clamp01((social + 1.0) / 2.0)
-        wsum  += w
-        notes.append(f"Social sentiment {social:+.2f}.")
-    if fg:
-        has_any = True
-        w = 0.20
-        val = 0.5
-        if fg >= 60:
-            val = 0.7
-        if fg >= 75:
-            val = 0.85
-        if fg <= 25:
-            val = 0.3  # fear may be contrarian, but keep conservative
-        score += w * val; wsum += w
-        notes.append(f"Fear & Greed {fg:.0f}.")
+    scores = []
+    
+    if news_score:
+        # Convert from -1..1 to 0..1
+        news_norm = (news_score + 1) / 2
+        scores.append(news_norm)
+        if news_score > 0.2:
+            notes.append("Positive news sentiment")
+        elif news_score < -0.2:
+            notes.append("Negative news sentiment")
 
-    if not has_any:
-        return 0.5, ["No sentiment data — neutral."]
-    return _clamp01(score / wsum), notes
+    if social_score:
+        # Convert from -1..1 to 0..1
+        social_norm = (social_score + 1) / 2
+        scores.append(social_norm)
+        if social_score > 0.2:
+            notes.append("Positive social sentiment")
+
+    if fear_greed:
+        # Assume fear_greed is 0..100, convert to 0..1
+        fg_norm = fear_greed / 100.0
+        scores.append(fg_norm)
+        if fear_greed > 70:
+            notes.append("Market greed (caution)")
+        elif fear_greed < 30:
+            notes.append("Market fear (opportunity)")
+
+    if scores:
+        final_score = sum(scores) / len(scores)
+    else:
+        final_score = 0.5
+
+    return _clamp01(final_score), notes[:2]
 
 
 def _score_microstructure(asset: Row) -> Tuple[float, List[str]]:
+    """Return (0..1, notes) for microstructure analysis."""
+    notes: List[str] = []
     m = asset.get("microstructure") or {}
-    imbal = _nz(_safe_get(m, "order_imbalance"))
-    liq   = _nz(_safe_get(m, "liq_depth_score"))
-    whale = _nz(_safe_get(m, "whale_score"))
+    if not m:
+        return 0.5, ["No microstructure data available."]
+
+    order_imbalance = _nz(_safe_get(m, "order_imbalance"))
+    liq_depth = _nz(_safe_get(m, "liq_depth_score"))
+    whale_score = _nz(_safe_get(m, "whale_score"))
+
+    score = 0.5  # Start neutral
+
+    if order_imbalance:
+        if order_imbalance > 0.2:
+            score += 0.1
+            notes.append("Buy pressure")
+        elif order_imbalance < -0.2:
+            score -= 0.1
+            notes.append("Sell pressure")
+
+    if liq_depth and liq_depth > 0.7:
+        score += 0.05
+        notes.append("Good liquidity")
+
+    return _clamp01(score), notes[:2]
+
+
+def _score_risk_context(asset: Row, category: str = "") -> Tuple[float, List[str]]:
+    """Return (0..1, notes) for risk/liquidity context."""
     notes: List[str] = []
-    has_any = False
+    vol = _nz(asset.get("volume"))
+    price = _nz(asset.get("price"))
+    
+    score = 0.5  # Start neutral
 
-    score = 0.0
-    wsum  = 0.0
-
-    if imbal:
-        has_any = True
-        w = 0.5
-        score += w * _clamp01((imbal + 1.0) / 2.0)   # -1..1 → 0..1
-        wsum  += w
-        notes.append(f"Order imbalance {imbal:+.2f}.")
-    if liq:
-        has_any = True
-        w = 0.3
-        score += w * _clamp01(liq)                   # 0..1
-        wsum  += w
-        notes.append(f"Liquidity depth {liq:.2f}.")
-    if whale:
-        has_any = True
-        w = 0.2
-        score += w * _clamp01((whale + 1.0) / 2.0)   # -1..1 → 0..1
-        wsum  += w
-        notes.append(f"Whale activity {whale:+.2f}.")
-
-    if not has_any:
-        return 0.5, ["No microstructure data — neutral."]
-    return _clamp01(score / wsum), notes
-
-
-def _score_risk_context(asset: Row, *, category: str) -> Tuple[float, List[str]]:
-    """
-    Risk context is not “performance” but tradability:
-      • Lower ATR% and reasonable liquidity → higher score
-      • Extremely high volatility or very low volume → lower score
-    """
-    notes: List[str] = []
-    t = asset.get("technical") or {}
-    atr_pct = _nz(_safe_get(t, "atr_pct"))
-    vol     = _nz(asset.get("volume"))
-
-    score = 0.5
-    wsum  = 1.0
-
-    # Volatility
-    if atr_pct:
-        if atr_pct <= 1.0:
-            score += 0.2
-            notes.append("Low volatility (ATR%).")
-        elif atr_pct <= 3.0:
+    # Basic volume/liquidity check
+    if category in ["equities", "stocks"]:
+        if vol >= 1_000_000:
+            score += 0.1
+            notes.append("High liquidity")
+        elif vol >= 500_000:
             score += 0.05
-            notes.append("Moderate volatility.")
-        else:
-            score -= 0.15
-            notes.append("High volatility — position carefully.")
+            notes.append("OK liquidity")
+        elif vol <= 100_000:
+            score -= 0.1
+            notes.append("Low liquidity")
+    
+    # Price level check (avoid penny stocks)
+    if price:
+        if price < 1.0:
+            score -= 0.1
+            notes.append("Low price risk")
+        elif price > 100.0:
+            score += 0.05
+            notes.append("Established price level")
 
-    # Liquidity proxy
-    if vol:
-        # Normalize loosely by category
-        if category in {"equities","stocks","funds","warrants"}:
-            if vol >= 5_000_000:
-                score += 0.1; notes.append("High liquidity.")
-            elif vol >= 500_000:
-                score += 0.03; notes.append("OK liquidity.")
-            else:
-                score -= 0.10; notes.append("Thin liquidity.")
-        else:
-            # crypto/forex/futures/commodities: volume scale varies wildly; keep mild
-            if vol <= 0:
-                score -= 0.05; notes.append("Unknown liquidity.")
-            else:
-                score += 0.02; notes.append("Liquidity acceptable.")
-
-    return _clamp01(score), notes
+    return _clamp01(score), notes[:2]
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # 3) Weighting by regime
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 _REGIME_WEIGHTS = {
     # tech, fund, sent, micro, risk
@@ -502,11 +381,13 @@ _REGIME_WEIGHTS = {
 }
 
 def _blend_scores(regime: str, tech: float, fund: float, sent: float, micro: float, riskc: float) -> float:
+    """Blend individual scores using regime-specific weights."""
     w = _REGIME_WEIGHTS.get(regime, _REGIME_WEIGHTS["range"])
-    return _clamp01( tech*w[0] + fund*w[1] + sent*w[2] + micro*w[3] + riskc*w[4] )
+    return _clamp01(tech*w[0] + fund*w[1] + sent*w[2] + micro*w[3] + riskc*w[4])
 
 
 def _action_from_conf(conf: float) -> str:
+    """Convert confidence score to action."""
     if conf >= 0.62:
         return "Buy"
     if conf <= 0.38:
@@ -514,47 +395,51 @@ def _action_from_conf(conf: float) -> str:
     return "Hold"
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # 4) Risk: stop & target
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _propose_stop_target(price: float, asset: Row, action: str) -> Tuple[Optional[float], Optional[float]]:
+    """Propose stop loss and target based on ATR or default percentages."""
     t = asset.get("technical") or {}
     atr_pct = _nz(_safe_get(t, "atr_pct"))
+    
     # Use ATR bands if available; else 3% stop, 1.5R target
     if atr_pct > 0:
         stop_dist = max(1.2 * atr_pct / 100.0, 0.01)  # avoid ultra-tight stops
     else:
-        stop_dist = 0.03
-    rr = 1.5
+        stop_dist = 0.03  # 3% default
+    
+    rr = 1.5  # Risk-reward ratio
 
     if action == "Buy":
         stop = price * (1.0 - stop_dist)
-        tgt  = price * (1.0 + rr*stop_dist)
+        tgt = price * (1.0 + rr * stop_dist)
     elif action == "Sell":
         stop = price * (1.0 + stop_dist)
-        tgt  = price * (1.0 - rr*stop_dist)
+        tgt = price * (1.0 - rr * stop_dist)
     else:
         return None, None
+    
     return round(stop, 4), round(tgt, 4)
 
 
-# ────────────────────────────────────────────────────────────
-# Public API
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Core recommendation functions
+# ──────────────────────────────────────────────────────────────────────────────
 
 def recommend_for_assets(
     assets: List[Row],
     *,
     category: str,
     budget: float = 0.0,
-    risk_per_trade: float = 0.01,            # fraction of equity to risk per trade (for info only)
+    risk_per_trade: float = 0.01,
     regime_hint: Optional[str] = None
 ) -> List[Row]:
     """
-    Produce ranked recommendations across multiple assets (or a single asset).
-    This is “deterministic logic” parallel to your LLM strategy.
-
+    Produce ranked recommendations across multiple assets.
+    
+    This is "deterministic logic" parallel to your LLM strategy.
     The CLI can still enforce budget/position sizing afterwards.
     """
     out: List[Row] = []
@@ -578,15 +463,19 @@ def recommend_for_assets(
 
         stop, tgt = _propose_stop_target(price, a, action)
 
-        # Compose human “Key Reasons”: pick 3–5 strongest signals
+        # Compose human "Key Reasons": pick 3–5 strongest signals
         reason_bits: List[str] = []
         # Pick from technical first (usually most influential)
         reason_bits.extend(tech_notes[:2])
         # Then fundamentals/sentiment/microstructure/risk (1 each if present)
-        if fund_notes: reason_bits.append(fund_notes[0])
-        if sent_notes: reason_bits.append(sent_notes[0])
-        if micr_notes: reason_bits.append(micr_notes[0])
-        if risk_notes: reason_bits.append(risk_notes[0])
+        if fund_notes:
+            reason_bits.append(fund_notes[0])
+        if sent_notes:
+            reason_bits.append(sent_notes[0])
+        if micr_notes:
+            reason_bits.append(micr_notes[0])
+        if risk_notes:
+            reason_bits.append(risk_notes[0])
 
         reasons = "; ".join([r for r in reason_bits if r])[:400]
 
@@ -594,7 +483,7 @@ def recommend_for_assets(
             "asset": a.get("asset") or a.get("symbol"),
             "symbol": a.get("symbol") or a.get("asset"),
             "price": price,
-            "quantity": 0,                      # CLI enforces budget
+            "quantity": 0,  # CLI enforces budget
             "sell_target": tgt if action != "Hold" else 0.0,
             "stop_loss": stop if action != "Hold" else 0.0,
             "estimated_profit": 0.0,
@@ -620,3 +509,80 @@ def recommend_one(asset: Row, *, category: str, **kwargs) -> Row:
     """
     rows = recommend_for_assets([asset], category=category, **kwargs)
     return rows[0] if rows else {}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API functions expected by main.py
+# ──────────────────────────────────────────────────────────────────────────────
+
+def analyze_market_batch(
+    rows: List[Row],
+    *,
+    market_ctx: Dict[str, Any],
+    feature_flags: Dict[str, Any],
+    budget: float
+) -> List[Row]:
+    """
+    Main API function for category flow analysis.
+    
+    Args:
+        rows: List of asset dictionaries from data fetchers
+        market_ctx: Market context (region, timezone, sessions, etc.)
+        feature_flags: Feature toggles (use_rsi, use_sma, use_sentiment, etc.)
+        budget: Available budget for trading
+    
+    Returns:
+        List of recommendation dictionaries
+    """
+    # Extract category from market context or default to equities
+    category = market_ctx.get("category", "equities")
+    
+    # Determine regime hint from market context if available
+    regime_hint = market_ctx.get("regime_hint")
+    
+    # Calculate risk per trade (could be configurable)
+    risk_per_trade = 0.02  # 2% of portfolio per trade
+    
+    return recommend_for_assets(
+        rows,
+        category=category,
+        budget=budget,
+        risk_per_trade=risk_per_trade,
+        regime_hint=regime_hint
+    )
+
+
+def analyze_single_asset(
+    row: Row,
+    *,
+    asset_class: str,
+    market_ctx: Dict[str, Any],
+    feature_flags: Dict[str, Any],
+    budget: float
+) -> Row:
+    """
+    Main API function for single asset analysis.
+    
+    Args:
+        row: Single asset dictionary from data fetcher
+        asset_class: Type of asset ("equities", "crypto", "forex", etc.)
+        market_ctx: Market context (region, timezone, sessions, etc.)
+        feature_flags: Feature toggles (use_rsi, use_sma, use_sentiment, etc.)
+        budget: Available budget for trading
+    
+    Returns:
+        Single recommendation dictionary
+    """
+    # Determine regime hint from market context if available
+    regime_hint = market_ctx.get("regime_hint")
+    
+    # Calculate risk per trade
+    risk_per_trade = 0.02  # 2% of portfolio per trade
+    
+    return recommend_one(
+        row,
+        category=asset_class,
+        budget=budget,
+        risk_per_trade=risk_per_trade,
+        regime_hint=regime_hint
+    )
