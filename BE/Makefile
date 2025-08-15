@@ -211,37 +211,31 @@ _interactive_api_setup:
 check-api: venv ## Check API key configuration status
 	@echo "$(CYAN)🔍 Checking API Configuration$(NC)"
 	@echo "================================="
-	@$(PYTHON_VENV) -c "\
-import os;\
-from pathlib import Path;\
-env_file = Path('.env');\
-if env_file.exists():\
-    with open(env_file) as f:\
-        lines = f.readlines();\
-    keys = {};\
-    for line in lines:\
-        if '=' in line and not line.strip().startswith('#'):\
-            key, val = line.strip().split('=', 1);\
-            keys[key] = bool(val.strip());\
-    print('📊 Financial Data APIs:');\
-    for api in ['TWELVEDATA_API_KEY', 'ALPHA_VANTAGE_API_KEY', 'CRYPTOCOMPARE_API_KEY']:\
-        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured';\
-        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}');\
-    print('');\
-    print('🤖 AI APIs:');\
-    for api in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY']:\
-        status = '✅ Configured' if keys.get(api, False) else '❌ Not configured';\
-        print(f'   {api.replace(\"_API_KEY\", \"\")}: {status}');\
-    missing = [k.replace('_API_KEY', '') for k, v in keys.items() if not v and 'API_KEY' in k];\
-    if missing:\
-        print('');\
-        print('🔧 To add missing keys: make setup-api');\
-    else:\
-        print('');\
-        print('🎉 All API keys configured!');\
-else:\
-    print('❌ .env file not found. Run: make setup-env');\
-"
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "📊 Financial Data APIs:"; \
+		for api in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY Alpha_Vantage" "CRYPTOCOMPARE_API_KEY CryptoCompare"; do \
+			set -- $api; \
+			if grep -q "^$1=" $(ENV_FILE) && [ -n "$(grep "^$1=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
+				echo "   $2: ✅ Configured"; \
+			else \
+				echo "   $2: ❌ Not configured"; \
+			fi; \
+		done; \
+		echo ""; \
+		echo "🤖 AI APIs:"; \
+		for api in "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
+			set -- $api; \
+			if grep -q "^$1=" $(ENV_FILE) && [ -n "$(grep "^$1=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
+				echo "   $2: ✅ Configured"; \
+			else \
+				echo "   $2: ❌ Not configured"; \
+			fi; \
+		done; \
+		echo ""; \
+		echo "💡 To configure missing APIs: make setup-api"; \
+	else \
+		echo "❌ .env file not found. Run: make setup-env"; \
+	fi
 
 .PHONY: show-api-info
 show-api-info: ## Show information about supported APIs
