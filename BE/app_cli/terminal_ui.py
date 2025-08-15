@@ -157,6 +157,41 @@ def ask_use_all_features() -> bool:
         print("Please enter 'y' for yes or 'n' for no.")
 
 
+def ask_use_rsi() -> bool:
+    while True:
+        ans = input("📊 Enable RSI (Relative Strength Index)? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
+
+
+def ask_use_sma() -> bool:
+    while True:
+        ans = input("📈 Enable SMA (Simple Moving Averages)? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
+
+
+def ask_use_sentiment() -> bool:
+    while True:
+        ans = input("💭 Enable Sentiment Analysis? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
+
+
+def prompt_indicator_bundle() -> Dict[str, any]:
+    """Legacy function for compatibility. Returns dict with all/selected indicators."""
+    return {"all": True, "selected": []}
+
+
 def ask_individual_indicators() -> List[str]:
     """Ask user to select individual technical indicators."""
     print("\n📊 Select Technical Indicators:")
@@ -348,40 +383,6 @@ def get_feature_configuration() -> Dict[str, any]:
     else:
         # Individual configuration
         return configure_individual_features()
-
-
-# Legacy compatibility functions (kept for backward compatibility)
-def ask_use_rsi() -> bool:
-    """Legacy function - kept for compatibility."""
-    while True:
-        ans = input("📊 Enable RSI (Relative Strength Index)? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
-
-
-def ask_use_sma() -> bool:
-    """Legacy function - kept for compatibility."""
-    while True:
-        ans = input("📈 Enable SMA (Simple Moving Averages)? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
-
-
-def ask_use_sentiment() -> bool:
-    """Legacy function - kept for compatibility."""
-    while True:
-        ans = input("💭 Enable Sentiment Analysis? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
