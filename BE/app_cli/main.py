@@ -72,6 +72,14 @@ except Exception:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Constants: ALL available indicators
+# ──────────────────────────────────────────────────────────────────────────────
+ALL_TECHNICAL_INDICATORS = [
+    "SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"
+]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _merge_market_context(selection: Optional[Dict[str, Any]], category_label: str) -> Dict[str, Any]:
@@ -90,20 +98,24 @@ def _merge_market_context(selection: Optional[Dict[str, Any]], category_label: s
 
 
 def _feature_flags(
-    use_rsi: bool = False,
-    use_sma: bool = False,
-    use_sentiment: bool = False,
+    use_rsi: bool = True,           # Default to True for ALL features
+    use_sma: bool = True,           # Default to True for ALL features
+    use_sentiment: bool = True,     # Default to True for ALL features
     selected_indicators: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Bundle feature flags for the strategy engines.
-    selected_indicators examples: ["EMA","MACD","ADX","RSI","STOCH","OBV","BBANDS","ATR"]
+    By default, ALL indicators and features are enabled.
     """
+    # If no indicators specified, use ALL available technical indicators
+    if not selected_indicators:
+        selected_indicators = ALL_TECHNICAL_INDICATORS.copy()
+    
     return {
         "use_rsi": use_rsi,
         "use_sma": use_sma,
         "use_sentiment": use_sentiment,
-        "selected_indicators": selected_indicators or [],
+        "selected_indicators": selected_indicators,
     }
 
 
@@ -156,6 +168,7 @@ def _print_diagnostics(category: str) -> None:
 def _include_history_needed(selected_indicators: List[str], use_rsi: bool, use_sma: bool) -> bool:
     """
     Decide whether to pull price history. If any technicals are on, we want it.
+    Since we're using ALL indicators by default, this will almost always return True.
     """
     techs = {"SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"}
     on = set(i.upper() for i in (selected_indicators or []))
@@ -163,11 +176,11 @@ def _include_history_needed(selected_indicators: List[str], use_rsi: bool, use_s
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Category (multi-asset) flow
+# Category (multi-asset) flow - MODIFIED TO USE ALL INDICATORS BY DEFAULT
 # ──────────────────────────────────────────────────────────────────────────────
 def run_category_flow() -> None:
     """
-    Original 7-category workflow (now supports full indicator bundles).
+    Original 7-category workflow (now uses ALL indicators by default).
     """
     # Yesterday's report
     prev = evaluate_previous_session()
@@ -179,23 +192,41 @@ def run_category_flow() -> None:
             rows.append([r.get("asset",""), f"{float(r.get('target',0.0)):.2f}", high_txt, r.get("hit","")])
         print_table(["Asset","Target$","High$","Result"], rows)
 
-    # Quick toggles (legacy) + indicator selection
-    if ask_use_all_features():
-        use_rsi = use_sma = use_sentiment = True
+    # NEW: Simplified flow - use ALL features by default with option to customize
+    print_header("Feature Configuration")
+    print("🚀 By default, ALL features and indicators are enabled for maximum analysis power!")
+    print("   This includes: RSI, SMA, Sentiment Analysis, and ALL Technical Indicators")
+    print("   Technical Indicators: SMA, EMA, MACD, ADX, RSI, STOCH, OBV, BBANDS, ATR")
+    
+    # Ask if user wants to use all features or customize
+    use_all_defaults = input("\n✅ Use ALL features and indicators? [Y/n]: ").strip().lower()
+    
+    if use_all_defaults in {"", "y", "yes"}:
+        # Use ALL features and indicators
+        use_rsi = True
+        use_sma = True
+        use_sentiment = True
+        selected_inds = ALL_TECHNICAL_INDICATORS.copy()
+        print("🎯 Using ALL features and indicators for comprehensive analysis!")
     else:
-        use_rsi       = ask_use_rsi()
-        use_sma       = ask_use_sma()
-        use_sentiment = ask_use_sentiment()
+        # Custom selection (legacy behavior)
+        print("\n📊 Custom feature selection:")
+        if ask_use_all_features():
+            use_rsi = use_sma = use_sentiment = True
+        else:
+            use_rsi       = ask_use_rsi()
+            use_sma       = ask_use_sma()
+            use_sentiment = ask_use_sentiment()
 
-    # FIXED: Changed from prompt_indicator_bundle() to prompt_category_indicator_selection()
-    # The new function returns a list of indicator names directly
-    selected_inds = prompt_category_indicator_selection()
+        # Let user choose indicators
+        selected_inds = prompt_category_indicator_selection()
 
     print_line()
-    print_kv("RSI", use_rsi)
-    print_kv("SMA", use_sma)
-    print_kv("Sentiment", use_sentiment)
-    print_kv("Indicators", ", ".join(selected_inds) if selected_inds else "None")
+    print_kv("RSI", "✅ Enabled" if use_rsi else "❌ Disabled")
+    print_kv("SMA", "✅ Enabled" if use_sma else "❌ Disabled")
+    print_kv("Sentiment", "✅ Enabled" if use_sentiment else "❌ Disabled")
+    print_kv("Technical Indicators", ", ".join(selected_inds) if selected_inds else "❌ None")
+    print_kv("Total Indicators", f"{len(selected_inds)} of {len(ALL_TECHNICAL_INDICATORS)} available")
     print_line()
 
     category = get_user_choice()     # canonical string
@@ -285,17 +316,18 @@ def run_category_flow() -> None:
         recommendations=recs,
         features={
             "RSI": use_rsi, "SMA": use_sma, "Sentiment": use_sentiment,
-            "Indicators": selected_inds
+            "Indicators": selected_inds,
+            "Total_Indicators_Used": len(selected_inds)
         },
     )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Single-asset flow
+# Single-asset flow - MODIFIED TO USE ALL INDICATORS BY DEFAULT
 # ──────────────────────────────────────────────────────────────────────────────
 def run_single_asset_flow() -> None:
     """
-    Analyze one specific symbol/coin/pair with user-selected indicators.
+    Analyze one specific symbol/coin/pair with ALL indicators by default.
     """
     # Collect input (symbol, asset_class, optional market/region, chosen indicators)
     params = prompt_single_asset_input()
@@ -304,8 +336,24 @@ def run_single_asset_flow() -> None:
     market       = params.get("market")
     region       = params.get("region")
     timeframes   = params.get("timeframes", ["1d"])      # reserved for MTF extensions
-    indicators   = params.get("indicators", [])          # e.g., ["EMA","MACD","RSI","BBANDS","ATR"]
-    budget       = params.get("budget", 1000.0)
+    
+    # MODIFIED: Use ALL indicators by default instead of just user selection
+    user_indicators = params.get("indicators", [])
+    
+    # Ask user if they want all indicators or just their selection
+    if user_indicators:
+        print(f"\n🔍 You selected: {', '.join(user_indicators)}")
+        use_all_indicators = input("🚀 Use ALL available indicators instead for better analysis? [Y/n]: ").strip().lower()
+        if use_all_indicators in {"", "y", "yes"}:
+            indicators = ALL_TECHNICAL_INDICATORS.copy()
+            print("✅ Using ALL technical indicators for comprehensive analysis!")
+        else:
+            indicators = user_indicators
+    else:
+        indicators = ALL_TECHNICAL_INDICATORS.copy()
+        print("🚀 No specific indicators selected - using ALL available indicators!")
+    
+    budget = params.get("budget", 1000.0)
 
     if not symbol:
         print("❌ No symbol provided.")
@@ -318,10 +366,10 @@ def run_single_asset_flow() -> None:
         "category": f"single:{asset_class}",
     }
 
-    # Check if sentiment is wanted
-    use_sentiment = params.get("use_sentiment", False)
-    use_rsi = "RSI" in [i.upper() for i in indicators]
-    use_sma = "SMA" in [i.upper() for i in indicators]
+    # Enable sentiment by default for single asset analysis
+    use_sentiment = params.get("use_sentiment", True)  # Default to True
+    use_rsi = True  # Always enable since we're using comprehensive analysis
+    use_sma = True  # Always enable since we're using comprehensive analysis
 
     feat = _feature_flags(
         use_rsi=use_rsi,
@@ -333,7 +381,11 @@ def run_single_asset_flow() -> None:
     # Show what's happening
     print_header(f"Single-Asset Analysis: {symbol.upper()}")
     print_kv("Asset Class", asset_class.capitalize())
-    print_kv("Indicators", ", ".join(indicators) if indicators else "None")
+    print_kv("Technical Indicators", ", ".join(indicators))
+    print_kv("Total Indicators", f"{len(indicators)} of {len(ALL_TECHNICAL_INDICATORS)} available")
+    print_kv("RSI Analysis", "✅ Enabled")
+    print_kv("SMA Analysis", "✅ Enabled")
+    print_kv("Sentiment Analysis", "✅ Enabled" if use_sentiment else "❌ Disabled")
     print_kv("Budget", f"${budget:.2f}")
     if market:
         print_kv("Market", market)
@@ -349,7 +401,7 @@ def run_single_asset_flow() -> None:
         row = fetch_single_symbol_quote(
             symbol=symbol,
             asset_class=asset_class,
-            include_history=bool(indicators),  # get history if any indicators requested
+            include_history=True,  # Always get history since we're using ALL indicators
             market=market,
             region=region,
         )
@@ -400,7 +452,8 @@ def run_single_asset_flow() -> None:
         recommendations=[rec],
         features={
             "RSI": use_rsi, "SMA": use_sma, "Sentiment": use_sentiment,
-            "Indicators": indicators, "Timeframes": timeframes
+            "Indicators": indicators, "Timeframes": timeframes,
+            "Total_Indicators_Used": len(indicators)
         },
     )
 
