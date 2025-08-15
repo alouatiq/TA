@@ -5,7 +5,8 @@ Terminal UI helpers for the Trading Assistant CLI.
 This module centralizes ALL console I/O so the rest of the app remains
 testable and headless.
 
-Public functions (used by app_cli/main.py):
+Public functions used by app_cli/main.py (backward compatible):
+  • prompt_main_mode() -> "category" | "single_asset"
   • ask_use_all_features() -> bool
   • ask_use_rsi() -> bool
   • ask_use_sma() -> bool
@@ -14,22 +15,17 @@ Public functions (used by app_cli/main.py):
   • get_user_choice() -> Literal[
         'crypto','forex','equities','commodities','futures','warrants','funds'
     ]
-  • ask_region_choice() -> str
-  • ask_market_choice(region: str) -> str
-  • get_market_selection() -> tuple[str, str]
   • get_market_selection_details() -> dict
-  • ask_stock_symbol(candidates: list[str] | None = None) -> str
-  • ask_stock_region_market(candidates: list[str] | None = None)
-        -> tuple[str, str, str]
+  • prompt_single_asset_input() -> dict
+  • NEW: prompt_category_indicator_selection() -> list[str]  (optional in old flow)
 
-Notes
------
-- Region & market menus show status dots:
-      🟢 all open   🟠 some open   🔴 all closed
-- Market sessions are displayed **in the user's local timezone**.
-- If market metadata can't be loaded, we gracefully degrade and return an
-  empty dict from get_market_selection_details(), allowing callers to
-  default to non–market-aware behavior (e.g., UTC / US).
+Region & market menus show status dots:
+    🟢 all open   🟠 some open   🔴 all closed   ⚪ unknown
+Market sessions are displayed **in the user's local timezone**.
+
+If market metadata can't be loaded, we gracefully degrade and return an
+empty dict from get_market_selection_details(), allowing callers to
+default to non–market-aware behavior (e.g., UTC / US).
 """
 
 from __future__ import annotations
@@ -62,6 +58,56 @@ try:
     LOCAL_TZ = ZoneInfo(tzlocal.get_localzone_name())
 except Exception:
     LOCAL_TZ = ZoneInfo("Europe/Paris")
+
+
+# ────────────────────────────────────────────────────────────
+# Pretty output helpers (used by main.py)
+# ────────────────────────────────────────────────────────────
+
+def print_header(title: str) -> None:
+    print("\n" + title)
+    print("─" * max(12, len(title)))
+
+
+def print_line() -> None:
+    print("—" * 36)
+
+
+def print_kv(key: str, value) -> None:
+    print(f"{key}: {value}")
+
+
+def print_table(headers: List[str], rows: List[List[object]]) -> None:
+    # very small, dependency‑free table
+    widths = [len(h) for h in headers]
+    for r in rows:
+        for i, cell in enumerate(r):
+            widths[i] = max(widths[i], len(str(cell)))
+
+    def fmt_row(r: List[object]) -> str:
+        return "  ".join(str(c).ljust(widths[i]) for i, c in enumerate(r))
+
+    print(fmt_row(headers))
+    print(fmt_row(["-" * w for w in widths]))
+    for r in rows:
+        print(fmt_row(r))
+
+
+# ────────────────────────────────────────────────────────────
+# Mode selection (classic 7‑category flow vs single‑asset)
+# ────────────────────────────────────────────────────────────
+
+def prompt_main_mode() -> str:
+    print("\nChoose mode:")
+    print("  1) Analyze a CATEGORY (classic workflow)")
+    print("  2) Analyze a SINGLE ASSET (symbol/coin/pair)")
+    while True:
+        ans = input("Enter number [1/2]: ").strip()
+        if ans in {"1", ""}:
+            return "category"
+        if ans == "2":
+            return "single_asset"
+        print("Please enter 1 or 2.")
 
 
 # ────────────────────────────────────────────────────────────
@@ -148,7 +194,7 @@ def get_user_budget() -> float:
 
 
 # ────────────────────────────────────────────────────────────
-# Category selection
+# Category selection (classic flow)
 # ────────────────────────────────────────────────────────────
 
 def get_user_choice() -> str:
@@ -175,12 +221,49 @@ def get_user_choice() -> str:
         if k:
             return k
 
-        # try matching label exactly
+        # exact label match
         for key, label in _CATEGORIES:
             if ans == label.lower():
                 return key
 
         print("Invalid choice. Try again (e.g., '1', 'stocks', 'fx', or 'crypto').")
+
+
+# ────────────────────────────────────────────────────────────
+# Indicator selection (classic flow – optional)
+# ────────────────────────────────────────────────────────────
+
+# Canonical indicator names used by the rules engine
+_ALL_INDICATORS = [
+    "SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR",
+]
+
+def prompt_category_indicator_selection() -> List[str]:
+    """
+    Optional menu to choose which indicators the classic flow should run.
+    If the user chooses "All core indicators", returns the full list.
+    If they choose "Custom selection", returns only the checked ones (can be empty).
+
+    NOTE: If your current main.py doesn't consume this yet, you can ignore
+    the result for now. It’s non‑breaking.
+    """
+    print("\nIndicator set for CATEGORY analysis:")
+    print("  1) All core indicators")
+    print("  2) Custom selection")
+    while True:
+        ans = input("Enter number [1/2]: ").strip()
+        if ans in {"1", ""}:
+            return list(_ALL_INDICATORS)
+        if ans == "2":
+            break
+        print("Please enter 1 or 2.")
+
+    chosen: List[str] = []
+    print("\nSelect indicators (y/n):")
+    for name in _ALL_INDICATORS:
+        if _yn(f"  - {name}?", default=True):
+            chosen.append(name)
+    return chosen
 
 
 # ────────────────────────────────────────────────────────────
@@ -228,7 +311,6 @@ def _region_dot(region: str, grouped: Dict[str, List[Tuple[str, Dict]]]) -> str:
     for mkey, _ in mkts:
         st = _market_is_open(mkey)
         if st is None:
-            # unknown state – skip from counts
             continue
         total += 1
         if st:
@@ -269,7 +351,6 @@ def ask_region_choice() -> str:
     """
     regions, grouped = _load_grouped_markets()
     if not regions:
-        # fallback to static order if config not available
         regions = list(_DEFAULT_REGIONS)
         grouped = {r: [] for r in regions}
 
@@ -363,45 +444,114 @@ def get_market_selection_details() -> Dict[str, str]:
 
 
 # ────────────────────────────────────────────────────────────
-# Optional symbol prompts (for single‑asset flow)
+# Single‑asset prompts (symbol + indicators + optional context)
 # ────────────────────────────────────────────────────────────
 
-def ask_stock_symbol(candidates: Optional[List[str]] = None) -> str:
+_SINGLE_ASSET_CLASSES = [
+    ("equity", "Stock / Equity"),
+    ("crypto", "Crypto / Coin"),
+    ("forex",  "FX Pair"),
+]
+
+_TIMEFRAME_CHOICES = [
+    "1h", "4h", "1d", "1w"
+]
+
+def _prompt_from_list(title: str, options: List[Tuple[str, str]], default_idx: int = 1) -> str:
+    print(f"\n{title}")
+    for i, (_, label) in enumerate(options, start=1):
+        print(f"  {i}. {label}")
+    while True:
+        raw = input(f"Enter number [{default_idx}]: ").strip()
+        if raw == "":
+            return options[default_idx - 1][0]
+        try:
+            idx = int(raw)
+            if 1 <= idx <= len(options):
+                return options[idx - 1][0]
+        except Exception:
+            pass
+        print(f"Choose a number between 1 and {len(options)} (or press Enter for default).")
+
+
+def prompt_single_asset_input() -> Dict[str, object]:
     """
-    Ask for a stock/asset symbol. If `candidates` are provided, show a menu
-    with a '0 = custom' option.
+    Collects single‑asset analysis parameters:
+      {
+        symbol: str,
+        asset_class: 'equity'|'crypto'|'forex',
+        market: Optional[str],
+        region: Optional[str],
+        timeframes: list[str],         # e.g., ["1d","4h"]
+        indicators: list[str],         # subset of _ALL_INDICATORS
+        budget: float,
+        use_rsi: bool,
+        use_sma: bool,
+        use_sentiment: bool,
+      }
     """
-    if candidates:
-        print("\nChoose a symbol (or type a different one):")
-        for i, s in enumerate(candidates, start=1):
-            print(f"  {i}. {s}")
-        print("  0. Type a different symbol")
-        while True:
-            raw = input("Enter number (or 0): ").strip()
+    symbol = input("\nEnter symbol / pair / coin (e.g., AAPL, BTC, EURUSD): ").strip().upper()
+    while not symbol:
+        symbol = input("Symbol cannot be empty. Enter symbol: ").strip().upper()
+
+    asset_class = _prompt_from_list("Choose ASSET CLASS:", _SINGLE_ASSET_CLASSES, default_idx=1)
+
+    # Optional market/region (useful for equities)
+    region = None
+    market = None
+    if asset_class == "equity":
+        if _yn("Select a market for this stock?", default=True):
             try:
-                idx = int(raw)
-                if idx == 0:
-                    break
-                if 1 <= idx <= len(candidates):
-                    return candidates[idx - 1].upper()
+                region, market = get_market_selection()
             except Exception:
-                pass
-            print(f"Choose 0 or a number between 1 and {len(candidates)}.")
-    # custom entry path
-    sym = input("Enter symbol: ").strip().upper()
-    while not sym:
-        sym = input("Symbol cannot be empty. Enter symbol: ").strip().upper()
-    return sym
+                print("(Could not load markets; continuing without a specific market.)")
 
+    # Timeframes (simple multi‑select)
+    print("\nChoose TIMEFRAMES to consider (press Enter to keep default: 1d):")
+    chosen_tf = []
+    for tf in _TIMEFRAME_CHOICES:
+        if _yn(f"  - {tf}?", default=(tf == "1d" or tf == "4h")):
+            chosen_tf.append(tf)
+    if not chosen_tf:
+        chosen_tf = ["1d"]
 
-def ask_stock_region_market(candidates: Optional[List[str]] = None) -> Tuple[str, str, str]:
-    """
-    Combined convenience flow:
-      1) choose a symbol (or enter manually)
-      2) choose a region
-      3) choose a market in that region
-    Returns (symbol, region, market_key).
-    """
-    symbol = ask_stock_symbol(candidates)
-    region, market = get_market_selection()
-    return symbol, region, market
+    # Indicators selection
+    print("\nIndicator set for SINGLE ASSET:")
+    print("  1) All core indicators")
+    print("  2) Custom selection")
+    while True:
+        ans = input("Enter number [1/2]: ").strip()
+        if ans in {"1", ""}:
+            indicators = list(_ALL_INDICATORS)
+            break
+        if ans == "2":
+            indicators = []
+            print("\nSelect indicators (y/n):")
+            for name in _ALL_INDICATORS:
+                if _yn(f"  - {name}?", default=True):
+                    indicators.append(name)
+            break
+        print("Please enter 1 or 2.")
+
+    # Budget + feature toggles (compatible with earlier engine flags)
+    try:
+        budget = float(input("Budget for this trade ($) [1000]: ").strip() or "1000")
+    except Exception:
+        budget = 1000.0
+
+    use_rsi = "RSI" in indicators
+    use_sma = ("SMA" in indicators) or ("EMA" in indicators)
+    use_sentiment = _yn("Enable sentiment analysis for this asset?", default=False)
+
+    return {
+        "symbol": symbol,
+        "asset_class": asset_class,
+        "market": market,
+        "region": region,
+        "timeframes": chosen_tf,
+        "indicators": indicators,
+        "budget": budget,
+        "use_rsi": use_rsi,
+        "use_sma": use_sma,
+        "use_sentiment": use_sentiment,
+    }
