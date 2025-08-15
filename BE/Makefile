@@ -60,7 +60,7 @@ run: install
 	if [ -f .env ]; then echo "🔧 Loading .env"; . ./.env; fi; \
 	set +a; \
 	export PYTHONPATH="$(PWD)"; \
-	$(PY) app_cli/main.py $(ARGS)
+	$(PY) -m app_cli.main $(ARGS)
 
 .PHONY: test
 test: install
@@ -70,7 +70,7 @@ test: install
 
 .PHONY: freeze
 freeze: install
-	@echo "📌 Writing locked requirements to requirements.lock"
+	@echo "🔌 Writing locked requirements to requirements.lock"
 	@$(PIP) freeze > requirements.lock
 
 .PHONY: clean
