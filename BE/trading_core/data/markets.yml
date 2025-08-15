@@ -1,3 +1,4 @@
+# BE/trading_core/data/markets.yml
 # Market metadata used by the CLI + strategy to show sessions, detect open/close,
 # and to pass tz/session context to the LLM. Times are LOCAL to the exchange.
 # trading_days use Python weekday numbers: 0=Mon ... 6=Sun
@@ -9,73 +10,74 @@ NYSE:
   label: "NYSE (US)"
   region: "Americas"
   timezone: "America/New_York"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","16:00"]
+    - ["09:30", "16:00"]
 
 NASDAQ:
   label: "NASDAQ (US)"
   region: "Americas"
   timezone: "America/New_York"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","16:00"]
+    - ["09:30", "16:00"]
 
 TSX:
   label: "TSX (Canada)"
   region: "Americas"
   timezone: "America/Toronto"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","16:00"]
+    - ["09:30", "16:00"]
 
 B3:
   label: "B3 (Brazil)"
   region: "Americas"
   timezone: "America/Sao_Paulo"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","17:30"]   # regular cash
+    - ["10:00", "17:30"]
 
 BMV:
   label: "BMV (Mexico)"
   region: "Americas"
   timezone: "America/Mexico_City"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["08:30","15:00"]
+    - ["08:30", "15:00"]
 
 BVC:
   label: "BVC (Colombia)"
   region: "Americas"
   timezone: "America/Bogota"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","16:00"]
+    - ["09:30", "16:00"]
 
 BVL:
   label: "BVL (Peru)"
   region: "Americas"
   timezone: "America/Lima"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","16:30"]
+    - ["09:00", "16:30"]
 
 BYMA:
   label: "BYMA (Argentina)"
   region: "Americas"
   timezone: "America/Argentina/Buenos_Aires"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["11:00","17:00"]
+    - ["11:00", "17:00"]
 
 BCS:
   label: "Bolsa de Santiago (Chile)"
   region: "Americas"
   timezone: "America/Santiago"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","16:00"]
+    - ["09:30", "16:00"]
+
 
 # ───────────────────────────────
 # EUROPE
@@ -84,161 +86,162 @@ LSE:
   label: "London Stock Exchange (UK)"
   region: "Europe"
   timezone: "Europe/London"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["08:00","16:30"]
+    - ["08:00", "16:30"]
 
 XETRA:
   label: "XETRA (Germany)"
   region: "Europe"
   timezone: "Europe/Berlin"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 SIX:
   label: "SIX Swiss Exchange"
   region: "Europe"
   timezone: "Europe/Zurich"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 BME:
   label: "BME (Spain)"
   region: "Europe"
   timezone: "Europe/Madrid"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 EN_PA:
   label: "Euronext Paris (France)"
   region: "Europe"
   timezone: "Europe/Paris"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 EN_AM:
   label: "Euronext Amsterdam (Netherlands)"
   region: "Europe"
   timezone: "Europe/Amsterdam"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 EN_BR:
   label: "Euronext Brussels (Belgium)"
   region: "Europe"
   timezone: "Europe/Brussels"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 EN_LI:
   label: "Euronext Lisbon (Portugal)"
   region: "Europe"
   timezone: "Europe/Lisbon"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 EN_DU:
   label: "Euronext Dublin (Ireland)"
   region: "Europe"
   timezone: "Europe/Dublin"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["08:00","16:30"]
+    - ["08:00", "16:30"]
 
 OMX_CPH:
   label: "Nasdaq Copenhagen (Denmark)"
   region: "Europe"
   timezone: "Europe/Copenhagen"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:00"]
+    - ["09:00", "17:00"]
 
 OMX_HEL:
   label: "Nasdaq Helsinki (Finland)"
   region: "Europe"
   timezone: "Europe/Helsinki"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","18:30"]  # 09:00–17:30 CET equivalent
+    - ["10:00", "18:30"]  # 09:00–17:30 CET equivalent
 
 OMX_STO:
   label: "Nasdaq Stockholm (Sweden)"
   region: "Europe"
   timezone: "Europe/Stockholm"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:25"]
+    - ["09:00", "17:25"]
 
 OSLO:
   label: "Oslo Børs (Norway)"
   region: "Europe"
   timezone: "Europe/Oslo"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","16:25"]
+    - ["09:00", "16:25"]
 
 WSE:
   label: "Warsaw Stock Exchange (Poland)"
   region: "Europe"
   timezone: "Europe/Warsaw"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:05"]
+    - ["09:00", "17:05"]
 
 VIE:
   label: "Vienna Stock Exchange (Austria)"
   region: "Europe"
   timezone: "Europe/Vienna"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
 
 BVB:
   label: "Bucharest Stock Exchange (Romania)"
   region: "Europe"
   timezone: "Europe/Bucharest"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","18:45"]
+    - ["10:00", "18:45"]
 
 ATHEX:
   label: "Athens Stock Exchange (Greece)"
   region: "Europe"
   timezone: "Europe/Athens"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:15","17:20"]
+    - ["10:15", "17:20"]
 
 PRG:
   label: "Prague Stock Exchange (Czechia)"
   region: "Europe"
   timezone: "Europe/Prague"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","16:20"]
+    - ["09:00", "16:20"]
 
 BUD:
   label: "Budapest Stock Exchange (Hungary)"
   region: "Europe"
   timezone: "Europe/Budapest"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:00"]
+    - ["09:00", "17:00"]
 
 BIT:
   label: "Borsa Italiana (Italy)"
   region: "Europe"
   timezone: "Europe/Rome"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:30"]
+    - ["09:00", "17:30"]
+
 
 # ───────────────────────────────
 # MIDDLE EAST & AFRICA
@@ -247,97 +250,98 @@ ADX:
   label: "Abu Dhabi Securities Exchange"
   region: "Middle East & Africa"
   timezone: "Asia/Dubai"
-  trading_days: [0,1,2,3,4]   # Sun–Thu local work week; we normalize to Mon–Fri for simplicity
+  trading_days: [0, 1, 2, 3, 4]   # Sun–Thu local work week; normalized to Mon–Fri here
   sessions:
-    - ["10:00","15:00"]       # local standard
+    - ["10:00", "15:00"]
 
 BHB:
   label: "Bahrain Bourse"
   region: "Middle East & Africa"
   timezone: "Asia/Bahrain"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","13:00"]
+    - ["10:00", "13:00"]
 
 BRVM:
   label: "BRVM (West Africa)"
   region: "Middle East & Africa"
   timezone: "Africa/Abidjan"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","14:00"]
+    - ["10:00", "14:00"]
 
 CSE_MA:
   label: "Casablanca Stock Exchange (Morocco)"
   region: "Middle East & Africa"
   timezone: "Africa/Casablanca"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","15:30"]
+    - ["09:30", "15:30"]
 
 DFM:
   label: "Dubai Financial Market"
   region: "Middle East & Africa"
   timezone: "Asia/Dubai"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","14:45"]
+    - ["10:00", "14:45"]
 
 EGX:
   label: "Egyptian Exchange"
   region: "Middle East & Africa"
   timezone: "Africa/Cairo"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","14:30"]
+    - ["10:00", "14:30"]
 
 JSE:
   label: "Johannesburg Stock Exchange (South Africa)"
   region: "Middle East & Africa"
   timezone: "Africa/Johannesburg"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","17:00"]
+    - ["09:00", "17:00"]
 
 MSX:
   label: "MSX/MSM (Oman)"
   region: "Middle East & Africa"
   timezone: "Asia/Muscat"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","13:00"]
+    - ["10:00", "13:00"]
 
 NGX:
   label: "Nigerian Exchange"
   region: "Middle East & Africa"
   timezone: "Africa/Lagos"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:30","15:30"]
+    - ["10:30", "15:30"]
 
 NSE_KE:
   label: "Nairobi Securities Exchange (Kenya)"
   region: "Middle East & Africa"
   timezone: "Africa/Nairobi"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","15:00"]
+    - ["09:00", "15:00"]
 
 QSE:
   label: "Qatar Stock Exchange"
   region: "Middle East & Africa"
   timezone: "Asia/Qatar"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","13:15"]
+    - ["09:30", "13:15"]
 
 TADAWUL:
   label: "Tadawul (Saudi Arabia)"
   region: "Middle East & Africa"
   timezone: "Asia/Riyadh"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","15:00"]
+    - ["10:00", "15:00"]
+
 
 # ───────────────────────────────
 # ASIA-PACIFIC
@@ -346,83 +350,83 @@ ASX:
   label: "ASX (Australia)"
   region: "Asia-Pacific"
   timezone: "Australia/Sydney"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["10:00","16:00"]
+    - ["10:00", "16:00"]
 
 BSE_IN:
   label: "BSE (India)"
   region: "Asia-Pacific"
   timezone: "Asia/Kolkata"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:15","15:30"]
+    - ["09:15", "15:30"]
 
 NSE_IN:
   label: "NSE (India)"
   region: "Asia-Pacific"
   timezone: "Asia/Kolkata"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:15","15:30"]
+    - ["09:15", "15:30"]
 
 HKEX:
   label: "HKEX (Hong Kong)"
   region: "Asia-Pacific"
   timezone: "Asia/Hong_Kong"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","12:00"]
-    - ["13:00","16:00"]
+    - ["09:30", "12:00"]
+    - ["13:00", "16:00"]
 
 TSE:
   label: "JPX/TSE (Japan)"
   region: "Asia-Pacific"
   timezone: "Asia/Tokyo"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","11:30"]
-    - ["12:30","15:00"]
+    - ["09:00", "11:30"]
+    - ["12:30", "15:00"]
 
 KOSPI:
   label: "KRX/KOSPI (Korea)"
   region: "Asia-Pacific"
   timezone: "Asia/Seoul"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","15:30"]
+    - ["09:00", "15:30"]
 
 SGX:
   label: "SGX (Singapore)"
   region: "Asia-Pacific"
   timezone: "Asia/Singapore"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","12:00"]
-    - ["13:00","17:00"]
+    - ["09:00", "12:00"]
+    - ["13:00", "17:00"]
 
 SSE:
   label: "Shanghai Stock Exchange (China)"
   region: "Asia-Pacific"
   timezone: "Asia/Shanghai"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","11:30"]
-    - ["13:00","15:00"]
+    - ["09:30", "11:30"]
+    - ["13:00", "15:00"]
 
 SZSE:
   label: "Shenzhen Stock Exchange (China)"
   region: "Asia-Pacific"
   timezone: "Asia/Shanghai"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:30","11:30"]
-    - ["13:00","15:00"]
+    - ["09:30", "11:30"]
+    - ["13:00", "15:00"]
 
 TWSE:
   label: "TWSE (Taiwan)"
   region: "Asia-Pacific"
   timezone: "Asia/Taipei"
-  trading_days: [0,1,2,3,4]
+  trading_days: [0, 1, 2, 3, 4]
   sessions:
-    - ["09:00","13:30"]
+    - ["09:00", "13:30"]
