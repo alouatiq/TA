@@ -30,7 +30,7 @@ from .terminal_ui import (
 
     # feature toggles & indicator selection
     ask_use_all_features, ask_use_rsi, ask_use_sma, ask_use_sentiment,
-    prompt_indicator_bundle,          # -> {"all":bool,"selected":[...]} for old flow
+    prompt_category_indicator_selection,  # -> list[str] for indicator selection
 
     # category flow
     get_user_choice, get_user_budget, get_market_selection_details,
@@ -71,54 +71,32 @@ except Exception:
     LOCAL_TZ = zoneinfo.ZoneInfo("Europe/Paris")
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 def _merge_market_context(selection: Optional[Dict[str, Any]], category_label: str) -> Dict[str, Any]:
     """
     Normalize a market context dict for downstream strategy/rules.
     """
-    ctx = {
-        "market": None,
-        "market_name": category_label.title(),
-        "region": None,
-        "timezone": "UTC",
-        "sessions": [],
-        "trading_days": [],
-    }
     if not selection:
-        return ctx
-
-    market = selection.get("market")
-    region = selection.get("region")
-    if market:
-        try:
-            mi = get_market_info(market)
-            ctx.update({
-                "market": market,
-                "market_name": mi.get("label", market),
-                "region": mi.get("region", region),
-                "timezone": mi.get("timezone", "UTC"),
-                "sessions": mi.get("sessions", []),
-                "trading_days": mi.get("trading_days", []),
-            })
-        except Exception:
-            ctx.update({"market": market, "region": region})
-    else:
-        if region:
-            ctx["region"] = region
-    return ctx
+        return {"market": None, "region": None, "category": category_label}
+    return {
+        "market": selection.get("market"),
+        "region": selection.get("region"),
+        "category": category_label,
+        "market_label": selection.get("market_label"),
+        "region_label": selection.get("region_label"),
+    }
 
 
 def _feature_flags(
-    *,
-    use_rsi: bool,
-    use_sma: bool,
-    use_sentiment: bool,
+    use_rsi: bool = False,
+    use_sma: bool = False,
+    use_sentiment: bool = False,
     selected_indicators: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Standardize feature flags for the rules engine.
+    Bundle feature flags for the strategy engines.
     selected_indicators examples: ["EMA","MACD","ADX","RSI","STOCH","OBV","BBANDS","ATR"]
     """
     return {
@@ -184,24 +162,24 @@ def _include_history_needed(selected_indicators: List[str], use_rsi: bool, use_s
     return bool(use_rsi or use_sma or (techs & on))
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Category (multi-asset) flow
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 def run_category_flow() -> None:
     """
     Original 7-category workflow (now supports full indicator bundles).
     """
-    # Yesterday’s report
+    # Yesterday's report
     prev = evaluate_previous_session()
     if prev:
-        print_header("Yesterday’s Score-card")
+        print_header("Yesterday's Score-card")
         rows = []
         for r in prev:
             high_txt = "?" if r.get("day_high") is None else f"{float(r['day_high']):.2f}"
             rows.append([r.get("asset",""), f"{float(r.get('target',0.0)):.2f}", high_txt, r.get("hit","")])
         print_table(["Asset","Target$","High$","Result"], rows)
 
-    # Quick toggles (legacy) + indicator bundle picker
+    # Quick toggles (legacy) + indicator selection
     if ask_use_all_features():
         use_rsi = use_sma = use_sentiment = True
     else:
@@ -209,10 +187,9 @@ def run_category_flow() -> None:
         use_sma       = ask_use_sma()
         use_sentiment = ask_use_sentiment()
 
-    bundle = prompt_indicator_bundle()  # {"all": bool, "selected":[...]}
-    selected_inds = bundle.get("selected", []) if not bundle.get("all", False) else [
-        "SMA","EMA","MACD","ADX","RSI","STOCH","OBV","BBANDS","ATR"
-    ]
+    # FIXED: Changed from prompt_indicator_bundle() to prompt_category_indicator_selection()
+    # The new function returns a list of indicator names directly
+    selected_inds = prompt_category_indicator_selection()
 
     print_line()
     print_kv("RSI", use_rsi)
@@ -266,6 +243,10 @@ def run_category_flow() -> None:
         else:
             print("⚠️  Unknown category.")
             return
+    except Exception as e:
+        log.exception("data fetch failed")
+        print(f"\n❌ Data fetch error: {e}")
+        return
     finally:
         pbar.update(1)
 
@@ -309,9 +290,9 @@ def run_category_flow() -> None:
     )
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Single-asset flow
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 def run_single_asset_flow() -> None:
     """
     Analyze one specific symbol/coin/pair with user-selected indicators.
@@ -330,10 +311,17 @@ def run_single_asset_flow() -> None:
         print("❌ No symbol provided.")
         return
 
-    # Feature flags: single-asset UI already collected toggles or indicators
-    use_rsi       = params.get("use_rsi", "RSI" in [i.upper() for i in indicators])
-    use_sma       = params.get("use_sma", ("SMA" in [i.upper() for i in indicators]) or ("EMA" in [i.upper() for i in indicators]))
+    # Build market context
+    market_ctx = {
+        "market": market,
+        "region": region,
+        "category": f"single:{asset_class}",
+    }
+
+    # Check if sentiment is wanted
     use_sentiment = params.get("use_sentiment", False)
+    use_rsi = "RSI" in [i.upper() for i in indicators]
+    use_sma = "SMA" in [i.upper() for i in indicators]
 
     feat = _feature_flags(
         use_rsi=use_rsi,
@@ -342,23 +330,38 @@ def run_single_asset_flow() -> None:
         selected_indicators=indicators,
     )
 
-    # Market context
-    market_ctx = _merge_market_context({"market": market, "region": region} if market or region else None,
-                                       asset_class or "asset")
+    # Show what's happening
+    print_header(f"Single-Asset Analysis: {symbol.upper()}")
+    print_kv("Asset Class", asset_class.capitalize())
+    print_kv("Indicators", ", ".join(indicators) if indicators else "None")
+    print_kv("Budget", f"${budget:.2f}")
+    if market:
+        print_kv("Market", market)
+    if region:
+        print_kv("Region", region)
+    print_line()
 
-    include_history = _include_history_needed(indicators, use_rsi, use_sma)
-
+    # Progress tracking
     pbar = tqdm(total=3, desc="⏳ Processing", unit="step")
-    # 1) Fetch the single symbol row
+
+    # 1) Fetch single symbol
     try:
-        row = fetch_single_symbol_quote(symbol, asset_class=asset_class,
-                                        include_history=include_history, market=market)
+        row = fetch_single_symbol_quote(
+            symbol=symbol,
+            asset_class=asset_class,
+            include_history=bool(indicators),  # get history if any indicators requested
+            market=market,
+            region=region,
+        )
+        if not row:
+            print(f"\n❌ No data found for {symbol}")
+            return
+    except Exception as e:
+        log.exception("single symbol fetch failed")
+        print(f"\n❌ Data fetch error: {e}")
+        return
     finally:
         pbar.update(1)
-
-    if not row:
-        print(f"\n❌ Could not fetch data for {symbol}.")
-        return
 
     # 2) Analyze single asset
     try:
@@ -402,9 +405,9 @@ def run_single_asset_flow() -> None:
     )
 
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # Entry point
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 def main() -> None:
     # Warm up markets config (for tz/sessions/labels); non-fatal on error
     try:
