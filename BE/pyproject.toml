@@ -1,0 +1,47 @@
+# BE/pyproject.toml
+# Build metadata for the backend package.
+# We keep dependencies in requirements.txt and use the Makefile for dev workflow.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ta-backend"
+version = "0.1.0"
+description = "Trading Assistant backend (CLI + trading_core library)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [
+  { name = "Your Name or Team", email = "you@example.com" }
+]
+
+# We intentionally do NOT list dependencies here; we install from requirements.txt.
+
+[project.urls]
+Homepage = "https://example.com/TA"
+Repository = "https://example.com/TA.git"
+
+# Optional console entry point (lets you run `python -m ta_backend` or `ta`)
+# This maps to BE/app_cli/main.py:main
+[project.scripts]
+ta = "app_cli.main:main"
+
+[tool.setuptools]
+# Treat BE as the repository root for packaging.
+# If you run `python -m build` from BE/, setuptools will include these packages.
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "app_cli",
+  "trading_core",
+  "trading_core.*",
+]
+exclude = ["tests*", "FE*"]
+
+# Include YAML/data files shipped with trading_core
+[tool.setuptools.package-data]
+"trading_core.data" = ["*.yml"]
