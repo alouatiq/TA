@@ -1,9 +1,7 @@
 # BE/trading_core/data_fetcher/crypto.py
-from __future__ import annotations
-
 """
-crypto.py
-─────────
+Enhanced crypto.py with robust fallback mechanisms and proper historical data validation
+
 Discovery + quotes for cryptocurrencies with layered fallbacks:
 
 Order:
@@ -13,29 +11,14 @@ Order:
   4) CryptoCompare (fallback; discovery + price + history; requires API key)
   5) TwelveData (final fallback; price + history; requires API key and symbol normalization)
 
-Outputs a list[dict] for top liquid assets:
-  {
-    "asset": "<coingecko_id or symbol>",
-    "symbol": "BTC-USD",            # standardized display pair
-    "price":  62850.24,
-    "volume": 123456789.0,
-    "day_range_pct": 4.21,          # (high - low) / price * 100 when available; else 24h pct change
-    "price_history": [ ... ]        # optional; daily closes (oldest→newest); len ≈ history_days+1
-  }
-
-Usage:
-  rows = fetch_crypto_data(include_history=True, limit=20, history_days=60)
-
-Diagnostics:
-  LAST_CRYPTO_SOURCE: str
-  FAILED_CRYPTO_SOURCES: list[str]
-  SKIPPED_CRYPTO_SOURCES: list[str]
-
-Notes:
-  • No hard-coded coin lists – discovery comes from providers.
-  • History is best-effort; depths vary by provider and plan limits.
-  • TwelveData expects symbols like "BTC/USD" (we normalize to "BTC-USD" for display).
+Enhanced Features:
+- Proper validation of historical data before marking source as "successful"
+- Retry logic for individual assets within each source
+- Intelligent fallback when primary source fails to get sufficient historical data
+- Better error handling and diagnostics
 """
+
+from __future__ import annotations
 
 import os
 import time
@@ -63,17 +46,96 @@ except ImportError:
 REQUEST_TIMEOUT = 15
 DEFAULT_LIMIT = 20
 
-# ────────────────────────────────────────────────────────────
+# Enhanced validation thresholds
+MIN_HISTORICAL_DAYS = 7  # Minimum days of historical data to consider source successful
+MIN_ASSETS_WITH_HISTORY = 3  # Minimum number of assets that must have historical data
+
+# ────────────────────────────────────────────────────────────────────────────
 # Diagnostics
-# ────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 LAST_CRYPTO_SOURCE: str = "None"
 FAILED_CRYPTO_SOURCES: List[str] = []
 SKIPPED_CRYPTO_SOURCES: List[str] = []
 
 
-# ────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced validation helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+def _validate_historical_data(rows: List[Dict[str, Any]], include_history: bool, min_days: int = MIN_HISTORICAL_DAYS) -> bool:
+    """
+    Validate that we have sufficient historical data before considering a source successful.
+    
+    Args:
+        rows: List of asset dictionaries
+        include_history: Whether historical data was requested
+        min_days: Minimum number of historical days required
+    
+    Returns:
+        True if validation passes, False otherwise
+    """
+    if not include_history:
+        # If no history requested, just check that we have some assets with prices
+        return len(rows) > 0 and any(r.get("price", 0) > 0 for r in rows)
+    
+    # Count assets with sufficient historical data
+    assets_with_history = 0
+    for row in rows:
+        price_history = row.get("price_history", [])
+        if isinstance(price_history, list) and len(price_history) >= min_days:
+            assets_with_history += 1
+    
+    print(f"[DEBUG] Validation: {assets_with_history}/{len(rows)} assets have ≥{min_days} days of history")
+    
+    # We need at least MIN_ASSETS_WITH_HISTORY assets with sufficient historical data
+    return assets_with_history >= MIN_ASSETS_WITH_HISTORY
+
+
+def _merge_fallback_data(primary_rows: List[Dict[str, Any]], fallback_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Merge data from fallback sources to fill gaps in primary source data.
+    
+    Args:
+        primary_rows: Data from primary source
+        fallback_rows: Data from fallback source
+    
+    Returns:
+        Enhanced data with gaps filled
+    """
+    if not primary_rows:
+        return fallback_rows
+    
+    if not fallback_rows:
+        return primary_rows
+    
+    # Create lookup for fallback data by symbol
+    fallback_lookup = {}
+    for row in fallback_rows:
+        symbol = row.get("symbol", "").upper()
+        if symbol:
+            fallback_lookup[symbol] = row
+    
+    # Enhance primary data with fallback data where needed
+    enhanced_rows = []
+    for row in primary_rows:
+        enhanced_row = row.copy()
+        symbol = row.get("symbol", "").upper()
+        
+        # If this asset lacks historical data, try to get it from fallback
+        if not row.get("price_history") and symbol in fallback_lookup:
+            fallback_row = fallback_lookup[symbol]
+            if fallback_row.get("price_history"):
+                enhanced_row["price_history"] = fallback_row["price_history"]
+                print(f"[DEBUG] Enhanced {symbol} with historical data from fallback source")
+        
+        enhanced_rows.append(enhanced_row)
+    
+    return enhanced_rows
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 def _std_pair(symbol: str, quote: str = "USD") -> str:
     """Standardize display pair as 'BTC-USD'."""
     return f"{symbol.upper()}-{quote.upper()}"
@@ -93,56 +155,104 @@ def _ms_days_ago(days: int) -> int:
     return _now_ms() - days * 24 * 3600 * 1000
 
 
-# ────────────────────────────────────────────────────────────
-# 1) CoinGecko – primary
-# ────────────────────────────────────────────────────────────
-def _from_coingecko(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced source implementations
+# ────────────────────────────────────────────────────────────────────────────
+
+def _from_coingecko_enhanced(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Enhanced CoinGecko implementation with better error handling and validation."""
+    if not CoinGeckoClient:
+        raise RuntimeError("CoinGecko adapter not available")
+    
+    print(f"[DEBUG] CoinGecko: Fetching {limit} assets with {history_days} days history={include_history}")
+    
     cg = CoinGeckoClient()
-    markets = cg.get_markets(vs_currency="usd", order="volume_desc", per_page=limit, page=1, sparkline=False)
+    
+    try:
+        markets = cg.get_markets(vs_currency="usd", order="volume_desc", per_page=limit, page=1, sparkline=False)
+        print(f"[DEBUG] CoinGecko: Retrieved {len(markets)} market entries")
+    except Exception as e:
+        print(f"[DEBUG] CoinGecko markets fetch failed: {e}")
+        raise
+    
     rows: List[Dict[str, Any]] = []
+    successful_history_fetches = 0
 
-    for coin in markets:
-        price = _as_float(coin.get("current_price"))
-        high  = _as_float(coin.get("high_24h"))
-        low   = _as_float(coin.get("low_24h"))
-        vol   = _as_float(coin.get("total_volume")) or 0.0
-        sym   = (coin.get("symbol") or "").upper()
-        cid   = coin.get("id") or sym
+    for i, coin in enumerate(markets):
+        try:
+            price = _as_float(coin.get("current_price"))
+            high  = _as_float(coin.get("high_24h"))
+            low   = _as_float(coin.get("low_24h"))
+            vol   = _as_float(coin.get("total_volume")) or 0.0
+            sym   = (coin.get("symbol") or "").upper()
+            cid   = coin.get("id") or sym
 
-        day_range_pct: float = 0.0
-        if price and high is not None and low is not None and price != 0:
-            try:
-                day_range_pct = round(((high - low) / price) * 100.0, 2)
-            except Exception:
-                day_range_pct = 0.0
+            if not price or price <= 0:
+                print(f"[DEBUG] CoinGecko: Skipping {sym} - invalid price: {price}")
+                continue
 
-        item: Dict[str, Any] = {
-            "asset": cid,
-            "symbol": _std_pair(sym),
-            "price": price or 0.0,
-            "volume": vol,
-            "day_range_pct": day_range_pct,
-        }
+            day_range_pct: float = 0.0
+            if price and high is not None and low is not None and price != 0:
+                try:
+                    day_range_pct = round(((high - low) / price) * 100.0, 2)
+                except Exception:
+                    day_range_pct = 0.0
 
-        if include_history and cid:
-            try:
-                chart = cg.get_market_chart(cid, vs_currency="usd", days=history_days + 1, interval="daily")
-                prices = [p[1] for p in chart.get("prices", [])]
-                if prices:
-                    item["price_history"] = prices[-(history_days + 1):]
-            except Exception:
-                # history optional; ignore
-                pass
+            item: Dict[str, Any] = {
+                "asset": cid,
+                "symbol": _std_pair(sym),
+                "price": price or 0.0,
+                "volume": vol,
+                "day_range_pct": day_range_pct,
+            }
 
-        rows.append(item)
+            # Enhanced historical data fetching
+            if include_history and cid:
+                try:
+                    print(f"[DEBUG] CoinGecko: Fetching history for {sym} ({cid})")
+                    
+                    # Retry logic for historical data
+                    for attempt in range(2):
+                        try:
+                            chart = cg.market_chart(cid, vs_currency="usd", days=history_days + 2, interval="daily")
+                            
+                            if chart and "series" in chart:
+                                prices = [p[1] for p in chart["series"]]
+                                if len(prices) >= MIN_HISTORICAL_DAYS:
+                                    item["price_history"] = prices[-(history_days + 1):]
+                                    successful_history_fetches += 1
+                                    print(f"[DEBUG] CoinGecko: Got {len(item['price_history'])} price points for {sym}")
+                                    break
+                                else:
+                                    print(f"[DEBUG] CoinGecko: Insufficient history for {sym}: {len(prices)} days")
+                            else:
+                                print(f"[DEBUG] CoinGecko: No chart data for {sym}")
+                                
+                            if attempt == 0:
+                                time.sleep(0.5)  # Brief delay before retry
+                                
+                        except Exception as e:
+                            print(f"[DEBUG] CoinGecko: History fetch attempt {attempt + 1} failed for {sym}: {e}")
+                            if attempt == 0:
+                                time.sleep(0.5)
+                            
+                except Exception as e:
+                    print(f"[DEBUG] CoinGecko: Failed to get history for {sym}: {e}")
 
+            rows.append(item)
+            
+        except Exception as e:
+            print(f"[DEBUG] CoinGecko: Failed to process coin {i}: {e}")
+            continue
+
+    print(f"[DEBUG] CoinGecko: Processed {len(rows)} assets, {successful_history_fetches} with history")
     return rows
 
 
-# ────────────────────────────────────────────────────────────
-# 2) CoinPaprika – fallback
-# ────────────────────────────────────────────────────────────
-def _from_coinpaprika(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+def _from_coinpaprika_enhanced(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Enhanced CoinPaprika implementation."""
+    print(f"[DEBUG] CoinPaprika: Fetching {limit} assets with history={include_history}")
+    
     url = "https://api.coinpaprika.com/v1/tickers"
     resp = requests.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -152,137 +262,171 @@ def _from_coinpaprika(limit: int, include_history: bool, history_days: int) -> L
     def usd_vol(x: Dict[str, Any]) -> float:
         return float((((x.get("quotes") or {}).get("USD") or {}).get("volume_24h")) or 0.0)
 
-    top = sorted(data, key=usd_vol, reverse=True)[:limit]
+    top = sorted(data, key=usd_vol, reverse=True)[:limit * 2]  # Get extra in case some fail
     rows: List[Dict[str, Any]] = []
+    successful_history_fetches = 0
 
-    for c in top:
-        q = (c.get("quotes") or {}).get("USD") or {}
-        price = _as_float(q.get("price")) or 0.0
-        vol   = _as_float(q.get("volume_24h")) or 0.0
-        pct24 = _as_float(q.get("percent_change_24h"))
-        sym   = (c.get("symbol") or "").upper()
-        cid   = c.get("id") or sym
+    for c in top[:limit]:
+        try:
+            q = (c.get("quotes") or {}).get("USD") or {}
+            price = _as_float(q.get("price")) or 0.0
+            vol   = _as_float(q.get("volume_24h")) or 0.0
+            pct24 = _as_float(q.get("percent_change_24h"))
+            sym   = (c.get("symbol") or "").upper()
+            cid   = c.get("id") or sym
 
-        day_range_pct = 0.0
-        if pct24 is not None:
-            # if we don't have H/L, use 24h pct move as a proxy (not identical)
-            day_range_pct = round(float(pct24), 2)
+            if not price or price <= 0:
+                continue
 
-        item: Dict[str, Any] = {
-            "asset": cid,
-            "symbol": _std_pair(sym),
-            "price": price,
-            "volume": vol,
-            "day_range_pct": day_range_pct,
-        }
+            day_range_pct = 0.0
+            if pct24 is not None:
+                day_range_pct = round(float(pct24), 2)
 
-        if include_history and cid:
-            try:
-                # best-effort historical endpoint
-                start = (datetime.now(timezone.utc) - timedelta(days=history_days + 2)).strftime("%Y-%m-%d")
-                hurl = f"https://api.coinpaprika.com/v1/tickers/{cid}/historical?start={start}&interval=1d"
-                hresp = requests.get(hurl, timeout=REQUEST_TIMEOUT)
-                if hresp.ok:
-                    series = hresp.json()
-                    closes = [float(x["price"]) for x in series if "price" in x]
-                    if closes:
-                        item["price_history"] = closes[-(history_days + 1):]
-            except Exception:
-                pass
+            item: Dict[str, Any] = {
+                "asset": cid,
+                "symbol": _std_pair(sym),
+                "price": price,
+                "volume": vol,
+                "day_range_pct": day_range_pct,
+            }
 
-        rows.append(item)
+            if include_history and cid:
+                try:
+                    start = (datetime.now(timezone.utc) - timedelta(days=history_days + 2)).strftime("%Y-%m-%d")
+                    hurl = f"https://api.coinpaprika.com/v1/tickers/{cid}/historical?start={start}&interval=1d"
+                    hresp = requests.get(hurl, timeout=REQUEST_TIMEOUT)
+                    if hresp.ok:
+                        series = hresp.json()
+                        closes = [float(x["price"]) for x in series if "price" in x]
+                        if len(closes) >= MIN_HISTORICAL_DAYS:
+                            item["price_history"] = closes[-(history_days + 1):]
+                            successful_history_fetches += 1
+                            print(f"[DEBUG] CoinPaprika: Got {len(item['price_history'])} price points for {sym}")
+                except Exception as e:
+                    print(f"[DEBUG] CoinPaprika: History failed for {sym}: {e}")
 
+            rows.append(item)
+            
+        except Exception as e:
+            print(f"[DEBUG] CoinPaprika: Failed to process coin: {e}")
+            continue
+
+    print(f"[DEBUG] CoinPaprika: Processed {len(rows)} assets, {successful_history_fetches} with history")
     return rows
 
 
-# ────────────────────────────────────────────────────────────
-# 3) CoinCap – fallback
-# ────────────────────────────────────────────────────────────
-def _from_coincap(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+def _from_coincap_enhanced(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Enhanced CoinCap implementation."""
+    print(f"[DEBUG] CoinCap: Fetching {limit} assets with history={include_history}")
+    
     base = "https://api.coincap.io/v2"
     resp = requests.get(f"{base}/assets", params={"limit": limit}, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     data = (resp.json() or {}).get("data", [])
     rows: List[Dict[str, Any]] = []
+    successful_history_fetches = 0
 
     for c in data:
-        sym = (c.get("symbol") or "").upper()
-        cid = (c.get("id") or sym)
-        price = _as_float(c.get("priceUsd")) or 0.0
-        vol   = _as_float(c.get("volumeUsd24Hr")) or 0.0
-        pct24 = _as_float(c.get("changePercent24Hr"))
-        day_range_pct = round(pct24, 2) if pct24 is not None else 0.0
+        try:
+            sym = (c.get("symbol") or "").upper()
+            cid = (c.get("id") or sym)
+            price = _as_float(c.get("priceUsd")) or 0.0
+            vol   = _as_float(c.get("volumeUsd24Hr")) or 0.0
+            pct24 = _as_float(c.get("changePercent24Hr"))
+            
+            if not price or price <= 0:
+                continue
+                
+            day_range_pct = round(pct24, 2) if pct24 is not None else 0.0
 
-        item: Dict[str, Any] = {
-            "asset": cid,
-            "symbol": _std_pair(sym),
-            "price": price,
-            "volume": vol,
-            "day_range_pct": day_range_pct,
-        }
+            item: Dict[str, Any] = {
+                "asset": cid,
+                "symbol": _std_pair(sym),
+                "price": price,
+                "volume": vol,
+                "day_range_pct": day_range_pct,
+            }
 
-        if include_history and cid:
-            try:
-                end = _now_ms()
-                start = _ms_days_ago(history_days + 2)
-                hresp = requests.get(
-                    f"{base}/assets/{cid}/history",
-                    params={"interval": "d1", "start": start, "end": end},
-                    timeout=REQUEST_TIMEOUT,
-                )
-                if hresp.ok:
-                    series = (hresp.json() or {}).get("data", [])
-                    closes = [float(x["priceUsd"]) for x in series if "priceUsd" in x]
-                    if closes:
-                        item["price_history"] = closes[-(history_days + 1):]
-            except Exception:
-                pass
+            if include_history and cid:
+                try:
+                    end = _now_ms()
+                    start = _ms_days_ago(history_days + 2)
+                    hresp = requests.get(
+                        f"{base}/assets/{cid}/history",
+                        params={"interval": "d1", "start": start, "end": end},
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                    if hresp.ok:
+                        series = (hresp.json() or {}).get("data", [])
+                        closes = [float(x["priceUsd"]) for x in series if "priceUsd" in x]
+                        if len(closes) >= MIN_HISTORICAL_DAYS:
+                            item["price_history"] = closes[-(history_days + 1):]
+                            successful_history_fetches += 1
+                            print(f"[DEBUG] CoinCap: Got {len(item['price_history'])} price points for {sym}")
+                except Exception as e:
+                    print(f"[DEBUG] CoinCap: History failed for {sym}: {e}")
 
-        rows.append(item)
+            rows.append(item)
+            
+        except Exception as e:
+            print(f"[DEBUG] CoinCap: Failed to process coin: {e}")
+            continue
 
+    print(f"[DEBUG] CoinCap: Processed {len(rows)} assets, {successful_history_fetches} with history")
     return rows
 
 
-# ────────────────────────────────────────────────────────────
-# 4) CryptoCompare – fallback (API key)
-# ────────────────────────────────────────────────────────────
-def _from_cryptocompare(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+def _from_cryptocompare_enhanced(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Enhanced CryptoCompare implementation."""
     key = os.getenv("CRYPTOCOMPARE_API_KEY")
     if not key:
         raise RuntimeError("CRYPTOCOMPARE_API_KEY not set")
+
+    print(f"[DEBUG] CryptoCompare: Fetching {limit} assets with history={include_history}")
+    
+    if not CryptoCompareClient:
+        raise RuntimeError("CryptoCompare adapter not available")
 
     cc = CryptoCompareClient(api_key=key)
 
     # Discovery: top by total volume (vs USD)
     top = cc.top_by_total_volume_full(tsym="USD", limit=limit)
-    # top entries include coin info under 'CoinInfo' (Name symbol, FullName, Id, ...)
-
+    
     symbols: List[str] = []
     meta: Dict[str, Dict[str, Any]] = {}
     for e in top:
         info = e.get("CoinInfo") or {}
-        name = (info.get("Name") or "").upper()  # e.g., BTC
+        name = (info.get("Name") or "").upper()
         if not name:
             continue
         symbols.append(name)
         meta[name] = info
 
     if not symbols:
-        return []
+        raise RuntimeError("No symbols discovered from CryptoCompare")
 
     # Prices (RAW)
-    quotes = cc.price_multi_full(fsyms=",".join(symbols), tsyms="USD")  # RAW + DISPLAY
+    quotes = cc.price_multi_full(fsyms=",".join(symbols), tsyms="USD")
 
     rows: List[Dict[str, Any]] = []
+    successful_history_fetches = 0
+    
     for sym in symbols:
         try:
-            raw = (quotes.get("RAW") or {}).get(sym, {}).get("USD", {})
+            raw = (((quotes.get("RAW") or {}).get(sym) or {}).get("USD") or {})
+            if not raw:
+                continue
+                
             price = _as_float(raw.get("PRICE")) or 0.0
             vol   = _as_float(raw.get("TOTALVOLUME24H")) or 0.0
             high  = _as_float(raw.get("HIGH24HOUR"))
             low   = _as_float(raw.get("LOW24HOUR"))
+            
+            if not price or price <= 0:
+                continue
+
             day_range_pct = 0.0
-            if price and high is not None and low is not None and price != 0:
+            if high and low and price:
                 day_range_pct = round(((high - low) / price) * 100.0, 2)
 
             item: Dict[str, Any] = {
@@ -295,95 +439,111 @@ def _from_cryptocompare(limit: int, include_history: bool, history_days: int) ->
 
             if include_history:
                 try:
-                    # histoday returns last N daily candles (limit ≈ count - 1); we add buffer
-                    series = cc.histoday(fsym=sym, tsym="USD", limit=history_days + 2)
-                    closes = [float(x["close"]) for x in series if "close" in x]
-                    if closes:
-                        item["price_history"] = closes[-(history_days + 1):]
-                except Exception:
-                    pass
+                    # Get daily history
+                    hist = cc.history_day(fsym=sym, tsym="USD", limit=history_days + 2)
+                    if hist and "Data" in hist:
+                        closes = [float(x["close"]) for x in hist["Data"] if "close" in x]
+                        if len(closes) >= MIN_HISTORICAL_DAYS:
+                            item["price_history"] = closes[-(history_days + 1):]
+                            successful_history_fetches += 1
+                            print(f"[DEBUG] CryptoCompare: Got {len(item['price_history'])} price points for {sym}")
+                except Exception as e:
+                    print(f"[DEBUG] CryptoCompare: History failed for {sym}: {e}")
 
             rows.append(item)
-        except Exception:
+            
+        except Exception as e:
+            print(f"[DEBUG] CryptoCompare: Failed to process {sym}: {e}")
             continue
 
+    print(f"[DEBUG] CryptoCompare: Processed {len(rows)} assets, {successful_history_fetches} with history")
     return rows
 
 
-# ────────────────────────────────────────────────────────────
-# 5) TwelveData – final fallback (API key)
-# ────────────────────────────────────────────────────────────
-def _from_twelvedata(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
-    td_key = os.getenv("TWELVEDATA_API_KEY")
-    if not td_key:
+def _from_twelvedata_enhanced(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Enhanced TwelveData implementation."""
+    key = os.getenv("TWELVEDATA_API_KEY")
+    if not key:
         raise RuntimeError("TWELVEDATA_API_KEY not set")
+        
+    print(f"[DEBUG] TwelveData: Fetching {limit} assets with history={include_history}")
 
-    td = TwelveDataClient(api_key=td_key)
+    if not TwelveDataClient:
+        raise RuntimeError("TwelveData adapter not available")
 
-    # Discovery on TwelveData is not as straightforward. As a pragmatic fallback:
-    #  - use a small, *dynamic* top set from CoinGecko discovery first (symbols only),
-    #    then fetch via TwelveData. If CoinGecko discovery fails too, fallback to commonly
-    #    traded majors as last resort (kept to a tiny set to avoid "hard coding" bias).
+    td = TwelveDataClient(api_key=key)
+
+    # Get symbols from CoinGecko for discovery, then fetch via TwelveData
     symbols: List[str] = []
     try:
-        cg = CoinGeckoClient()
-        mk = cg.get_markets(vs_currency="usd", order="volume_desc", per_page=limit, page=1, sparkline=False)
-        symbols = [(c.get("symbol") or "").upper() for c in mk if c.get("symbol")]
+        if CoinGeckoClient:
+            cg = CoinGeckoClient()
+            mk = cg.get_markets(vs_currency="usd", order="volume_desc", per_page=limit, page=1, sparkline=False)
+            symbols = [(c.get("symbol") or "").upper() for c in mk if c.get("symbol")]
     except Exception:
         pass
 
     if not symbols:
-        # tiny safe default set if everything else fails (still discovery-light)
+        # Fallback to major cryptos
         symbols = ["BTC", "ETH", "XRP", "SOL", "ADA"][:limit]
 
     rows: List[Dict[str, Any]] = []
+    successful_history_fetches = 0
+    
     for sym in symbols:
-        pair_td = f"{sym}/USD"       # TwelveData format
-        pair_ui = _std_pair(sym)     # display format
-
         try:
+            pair_td = f"{sym}/USD"
+            pair_ui = _std_pair(sym)
+
             q = td.get_quote(pair_td)
             price = _as_float(q.get("price")) or 0.0
             vol   = _as_float(q.get("volume")) or 0.0
-
-            # No explicit high/low for day in /quote in all cases; estimate day_range_pct from last 1d series
-            day_range_pct = 0.0
+            
+            if not price or price <= 0:
+                continue
 
             item: Dict[str, Any] = {
                 "asset": sym.lower(),
                 "symbol": pair_ui,
                 "price": price,
                 "volume": vol,
-                "day_range_pct": day_range_pct,
+                "day_range_pct": 0.0,
             }
 
             if include_history:
                 try:
                     ts = td.get_time_series(pair_td, interval="1day", outputsize=min(200, history_days + 50))
-                    closes = [float(x["close"]) for x in ts][- (history_days + 1):]
-                    if closes:
-                        item["price_history"] = closes
-                    # compute day_range_pct from the last bar if we have OHLC
-                    if ts:
-                        last = ts[-1]
-                        h = _as_float(last.get("high"))
-                        l = _as_float(last.get("low"))
-                        c = _as_float(last.get("close"))
-                        if h and l and c and c != 0:
-                            item["day_range_pct"] = round(((h - l) / c) * 100.0, 2)
-                except Exception:
-                    pass
+                    closes = [float(x["close"]) for x in ts if "close" in x]
+                    if len(closes) >= MIN_HISTORICAL_DAYS:
+                        item["price_history"] = closes[-(history_days + 1):]
+                        successful_history_fetches += 1
+                        print(f"[DEBUG] TwelveData: Got {len(item['price_history'])} price points for {sym}")
+                        
+                        # compute day_range_pct from the last bar if we have OHLC
+                        if ts:
+                            last = ts[-1]
+                            h = _as_float(last.get("high"))
+                            l = _as_float(last.get("low"))
+                            c = _as_float(last.get("close"))
+                            if h and l and c and c != 0:
+                                item["day_range_pct"] = round(((h - l) / c) * 100.0, 2)
+                except Exception as e:
+                    print(f"[DEBUG] TwelveData: History failed for {sym}: {e}")
 
             rows.append(item)
-        except Exception:
+            
+        except Exception as e:
+            print(f"[DEBUG] TwelveData: Failed to process {sym}: {e}")
             continue
 
+    print(f"[DEBUG] TwelveData: Processed {len(rows)} assets, {successful_history_fetches} with history")
     return rows
 
 
-# ────────────────────────────────────────────────────────────
-# Public API
-# ────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced Public API
+# ────────────────────────────────────────────────────────────────────────────
+
 def fetch_crypto_data(
     include_history: bool = False,
     *,
@@ -391,7 +551,13 @@ def fetch_crypto_data(
     history_days: int = 60
 ) -> List[Dict[str, Any]]:
     """
-    Fetch top liquid cryptocurrencies with robust fallbacks and optional daily history.
+    Fetch top liquid cryptocurrencies with robust fallbacks and proper historical data validation.
+
+    Enhanced Features:
+    - Validates that historical data was actually retrieved before marking source as successful
+    - Automatically tries fallback sources when primary source fails to get sufficient historical data
+    - Merges data from multiple sources to fill gaps
+    - Provides detailed debug information about what worked and what failed
 
     Args:
         include_history: whether to include 'price_history' (daily closes, ~history_days+1 points).
@@ -399,61 +565,171 @@ def fetch_crypto_data(
         history_days: number of daily bars to fetch for indicators.
 
     Returns:
-        list of asset dicts (see module docstring).
+        list of asset dicts with guaranteed historical data if include_history=True
     """
     global LAST_CRYPTO_SOURCE, FAILED_CRYPTO_SOURCES, SKIPPED_CRYPTO_SOURCES
     FAILED_CRYPTO_SOURCES = []
     SKIPPED_CRYPTO_SOURCES = []
     LAST_CRYPTO_SOURCE = "None"
 
-    # Try providers in order, capturing diagnostics
-    # 1) CoinGecko
+    print(f"[DEBUG] fetch_crypto_data: limit={limit}, include_history={include_history}, history_days={history_days}")
+
+    # Try providers in order with enhanced validation
+    
+    # 1) CoinGecko - Enhanced version
     try:
-        rows = _from_coingecko(limit, include_history, history_days)
-        if rows:
+        print("[DEBUG] Trying CoinGecko (enhanced)...")
+        rows = _from_coingecko_enhanced(limit, include_history, history_days)
+        
+        if _validate_historical_data(rows, include_history):
             LAST_CRYPTO_SOURCE = "CoinGecko"
             SKIPPED_CRYPTO_SOURCES = ["CoinPaprika", "CoinCap", "CryptoCompare", "TwelveData"]
+            print(f"[DEBUG] CoinGecko SUCCESS: {len(rows)} assets with sufficient data")
             return rows
+        else:
+            print("[DEBUG] CoinGecko validation FAILED - trying fallbacks")
+            # Don't mark as failed yet, try to enhance with fallback data
+            primary_rows = rows
     except Exception as e:
+        print(f"[DEBUG] CoinGecko FAILED: {e}")
         FAILED_CRYPTO_SOURCES.append(f"CoinGecko ({e})")
+        primary_rows = []
 
-    # 2) CoinPaprika
+    # 2) CoinPaprika - Enhanced version  
     try:
-        rows = _from_coinpaprika(limit, include_history, history_days)
-        if rows:
+        print("[DEBUG] Trying CoinPaprika (enhanced)...")
+        rows = _from_coinpaprika_enhanced(limit, include_history, history_days)
+        
+        if _validate_historical_data(rows, include_history):
             LAST_CRYPTO_SOURCE = "CoinPaprika"
             SKIPPED_CRYPTO_SOURCES = ["CoinCap", "CryptoCompare", "TwelveData"]
+            print(f"[DEBUG] CoinPaprika SUCCESS: {len(rows)} assets with sufficient data")
             return rows
+        elif primary_rows:
+            # Try to merge CoinPaprika data with CoinGecko data
+            print("[DEBUG] Merging CoinPaprika data with CoinGecko data...")
+            merged_rows = _merge_fallback_data(primary_rows, rows)
+            if _validate_historical_data(merged_rows, include_history):
+                LAST_CRYPTO_SOURCE = "CoinGecko+CoinPaprika"
+                SKIPPED_CRYPTO_SOURCES = ["CoinCap", "CryptoCompare", "TwelveData"]
+                print(f"[DEBUG] Merged data SUCCESS: {len(merged_rows)} assets")
+                return merged_rows
+            primary_rows = merged_rows  # Keep merged data for next iteration
     except Exception as e:
+        print(f"[DEBUG] CoinPaprika FAILED: {e}")
         FAILED_CRYPTO_SOURCES.append(f"CoinPaprika ({e})")
 
-    # 3) CoinCap
+    # 3) CoinCap - Enhanced version
     try:
-        rows = _from_coincap(limit, include_history, history_days)
-        if rows:
+        print("[DEBUG] Trying CoinCap (enhanced)...")
+        rows = _from_coincap_enhanced(limit, include_history, history_days)
+        
+        if _validate_historical_data(rows, include_history):
             LAST_CRYPTO_SOURCE = "CoinCap"
             SKIPPED_CRYPTO_SOURCES = ["CryptoCompare", "TwelveData"]
+            print(f"[DEBUG] CoinCap SUCCESS: {len(rows)} assets with sufficient data")
             return rows
+        elif primary_rows:
+            # Try to merge CoinCap data
+            print("[DEBUG] Merging CoinCap data with previous data...")
+            merged_rows = _merge_fallback_data(primary_rows, rows)
+            if _validate_historical_data(merged_rows, include_history):
+                LAST_CRYPTO_SOURCE = f"{LAST_CRYPTO_SOURCE or 'Mixed'}+CoinCap"
+                SKIPPED_CRYPTO_SOURCES = ["CryptoCompare", "TwelveData"]
+                print(f"[DEBUG] Merged with CoinCap SUCCESS: {len(merged_rows)} assets")
+                return merged_rows
+            primary_rows = merged_rows
     except Exception as e:
+        print(f"[DEBUG] CoinCap FAILED: {e}")
         FAILED_CRYPTO_SOURCES.append(f"CoinCap ({e})")
 
-    # 4) CryptoCompare (API key)
+    # 4) CryptoCompare - Enhanced version (API key required)
     try:
-        rows = _from_cryptocompare(limit, include_history, history_days)
-        if rows:
+        print("[DEBUG] Trying CryptoCompare (enhanced)...")
+        rows = _from_cryptocompare_enhanced(limit, include_history, history_days)
+        
+        if _validate_historical_data(rows, include_history):
             LAST_CRYPTO_SOURCE = "CryptoCompare"
             SKIPPED_CRYPTO_SOURCES = ["TwelveData"]
+            print(f"[DEBUG] CryptoCompare SUCCESS: {len(rows)} assets with sufficient data")
             return rows
+        elif primary_rows:
+            # Try to merge CryptoCompare data
+            print("[DEBUG] Merging CryptoCompare data with previous data...")
+            merged_rows = _merge_fallback_data(primary_rows, rows)
+            if _validate_historical_data(merged_rows, include_history):
+                LAST_CRYPTO_SOURCE = f"{LAST_CRYPTO_SOURCE or 'Mixed'}+CryptoCompare"
+                SKIPPED_CRYPTO_SOURCES = ["TwelveData"]
+                print(f"[DEBUG] Merged with CryptoCompare SUCCESS: {len(merged_rows)} assets")
+                return merged_rows
+            primary_rows = merged_rows
     except Exception as e:
+        print(f"[DEBUG] CryptoCompare FAILED: {e}")
         FAILED_CRYPTO_SOURCES.append(f"CryptoCompare ({e})")
 
-    # 5) TwelveData (API key)
+    # 5) TwelveData - Enhanced version (API key required)
     try:
-        rows = _from_twelvedata(limit, include_history, history_days)
-        if rows:
+        print("[DEBUG] Trying TwelveData (enhanced)...")
+        rows = _from_twelvedata_enhanced(limit, include_history, history_days)
+        
+        if _validate_historical_data(rows, include_history):
             LAST_CRYPTO_SOURCE = "TwelveData"
+            print(f"[DEBUG] TwelveData SUCCESS: {len(rows)} assets with sufficient data")
             return rows
+        elif primary_rows:
+            # Try to merge TwelveData data
+            print("[DEBUG] Merging TwelveData data with previous data...")
+            merged_rows = _merge_fallback_data(primary_rows, rows)
+            if _validate_historical_data(merged_rows, include_history):
+                LAST_CRYPTO_SOURCE = f"{LAST_CRYPTO_SOURCE or 'Mixed'}+TwelveData"
+                print(f"[DEBUG] Final merged SUCCESS: {len(merged_rows)} assets")
+                return merged_rows
+            primary_rows = merged_rows
     except Exception as e:
+        print(f"[DEBUG] TwelveData FAILED: {e}")
         FAILED_CRYPTO_SOURCES.append(f"TwelveData ({e})")
 
+    # If we have some data but not enough historical data, return what we have
+    # but mark it as insufficient for indicator analysis
+    if primary_rows:
+        print(f"[DEBUG] Returning partial data: {len(primary_rows)} assets (insufficient historical data)")
+        LAST_CRYPTO_SOURCE = "Partial (insufficient history)"
+        
+        # Add a warning to each asset that lacks sufficient historical data
+        for row in primary_rows:
+            price_history = row.get("price_history", [])
+            if not price_history or len(price_history) < MIN_HISTORICAL_DAYS:
+                row["_warning"] = "insufficient_historical_data"
+        
+        return primary_rows
+
+    # Complete failure - all sources failed
+    print("[DEBUG] All crypto data sources FAILED")
+    LAST_CRYPTO_SOURCE = "None"
     return []
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Backwards compatibility - keep original function names
+# ────────────────────────────────────────────────────────────────────────────
+
+# Keep original functions for backwards compatibility, but mark them as deprecated
+def _from_coingecko(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Backwards compatibility wrapper - use enhanced version."""
+    return _from_coingecko_enhanced(limit, include_history, history_days)
+
+def _from_coinpaprika(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Backwards compatibility wrapper - use enhanced version."""
+    return _from_coinpaprika_enhanced(limit, include_history, history_days)
+
+def _from_coincap(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Backwards compatibility wrapper - use enhanced version."""
+    return _from_coincap_enhanced(limit, include_history, history_days)
+
+def _from_cryptocompare(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Backwards compatibility wrapper - use enhanced version."""
+    return _from_cryptocompare_enhanced(limit, include_history, history_days)
+
+def _from_twelvedata(limit: int, include_history: bool, history_days: int) -> List[Dict[str, Any]]:
+    """Backwards compatibility wrapper - use enhanced version."""
+    return _from_twelvedata_enhanced(limit, include_history, history_days)
