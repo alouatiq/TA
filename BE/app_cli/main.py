@@ -808,7 +808,7 @@ def run_enhanced_category_workflow() -> None:
     print("🎯 FINAL ANALYSIS CONFIGURATION:")
     print("─" * 50)
     
-    # AI Status
+    # AI Status - only show actually available engines
     if use_ai and ai_engines:
         if len(ai_engines) > 1:
             print(f"🤖 AI Analysis: ✅ {' + '.join(ai_engines)} (Multi-AI)")
