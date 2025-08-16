@@ -378,17 +378,24 @@ def ask_use_all_features() -> bool:
     print("Configure your trading analysis setup:")
     print()
     
-    # Show what "ALL" includes
+    # Show what "ALL" includes with smart AI detection
     available_ai = get_available_ai_engines()
     ai_engines = [name for name, available in available_ai.items() if available]
     
     print("🎯 MAXIMUM POWER MODE includes:")
     print("   📊 Technical Indicators: All 9 indicators (SMA, EMA, MACD, ADX, RSI, STOCH, OBV, BBANDS, ATR)")
     print("   💭 Sentiment Analysis: All 5 components (News, Social, Fear/Greed, Institutional, Technical)")
+    
+    # Smart AI status display
     if ai_engines:
-        print(f"   🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI if available)")
+        if len(ai_engines) == 1:
+            print(f"   🤖 AI Analysis: {ai_engines[0]} (Single-AI)")
+        else:
+            print(f"   🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI)")
     else:
-        print("   🤖 AI Analysis: Not available (configure API keys)")
+        print("   🤖 AI Analysis: ❌ Not available (configure API keys)")
+        print("      💡 Run 'make setup-api' to configure OpenAI or Anthropic")
+    
     print()
     
     while True:
