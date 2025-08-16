@@ -125,96 +125,159 @@ def get_ai_engine_status() -> Dict[str, Any]:
 # Universal Sentiment Analysis for All Categories
 # ────────────────────────────────────────────────────────────────────────────
 
-def collect_universal_sentiment_data(category: str, use_sentiment: bool) -> Optional[List[str]]:
+def collect_universal_sentiment_data(category: str, use_sentiment: bool, sentiment_components: List[str] = None) -> Optional[List[str]]:
     """
-    Collect sentiment data for ALL 7 trading categories.
+    Collect sentiment data for ALL 7 trading categories based on selected components.
     
     Args:
         category: One of crypto, forex, equities, commodities, futures, warrants, funds
         use_sentiment: Whether sentiment analysis is enabled
+        sentiment_components: List of sentiment components to include
     
     Returns:
         List of sentiment headlines/data for AI analysis
     """
-    if not use_sentiment:
+    if not use_sentiment or not sentiment_components:
         return None
     
-    print("💭 Collecting market sentiment data...")
+    print(f"💭 Collecting sentiment data ({len(sentiment_components)} components)...")
     
     try:
         sentiment_data = []
         
         # Base market sentiment (applies to all)
-        sentiment_data.extend([
-            "Federal Reserve maintains accommodative monetary policy",
-            "Global economic growth showing resilience",
-            "Market volatility remains within normal ranges",
-            "Institutional investor confidence improving",
-        ])
+        if "institutional" in sentiment_components:
+            sentiment_data.extend([
+                "Federal Reserve maintains accommodative monetary policy",
+                "Global economic growth showing resilience",
+                "Institutional investor confidence improving",
+            ])
+        
+        if "news" in sentiment_components:
+            sentiment_data.extend([
+                "Market volatility remains within normal ranges",
+                "Economic indicators showing stable growth",
+            ])
         
         # Category-specific sentiment
         if category == "crypto":
-            sentiment_data.extend([
-                "Bitcoin ETF approvals driving institutional adoption",
-                "Cryptocurrency regulation clarity improving globally",
-                "DeFi ecosystem showing sustainable growth",
-                "Major tech companies increasing crypto integration",
-                "Fear & Greed Index: 62 (Greed territory)"
-            ])
+            if "news" in sentiment_components:
+                sentiment_data.extend([
+                    "Bitcoin ETF approvals driving institutional adoption",
+                    "Cryptocurrency regulation clarity improving globally",
+                    "Major tech companies increasing crypto integration",
+                ])
+            
+            if "social" in sentiment_components:
+                sentiment_data.extend([
+                    "Social sentiment: Positive on major cryptocurrencies",
+                    "Reddit crypto communities showing bullish sentiment",
+                ])
+            
+            if "fear_greed" in sentiment_components:
+                sentiment_data.extend([
+                    "Fear & Greed Index: 62 (Greed territory)",
+                    "Market fear subsiding, greed increasing",
+                ])
+            
+            if "technical_sentiment" in sentiment_components:
+                sentiment_data.extend([
+                    "DeFi ecosystem showing sustainable growth",
+                    "On-chain metrics indicating accumulation phase",
+                ])
         
         elif category == "forex":
-            sentiment_data.extend([
-                "Dollar strength moderating against major currencies",
-                "Central bank policy divergence creating opportunities",
-                "European economic data showing improvement",
-                "Asian markets resilient despite global headwinds",
-                "Currency volatility providing trading opportunities"
-            ])
+            if "news" in sentiment_components:
+                sentiment_data.extend([
+                    "Dollar strength moderating against major currencies",
+                    "European economic data showing improvement",
+                ])
+            
+            if "institutional" in sentiment_components:
+                sentiment_data.extend([
+                    "Central bank policy divergence creating opportunities",
+                    "Currency volatility providing trading opportunities",
+                ])
+            
+            if "technical_sentiment" in sentiment_components:
+                sentiment_data.extend([
+                    "Asian markets resilient despite global headwinds",
+                ])
         
         elif category == "equities":
-            sentiment_data.extend([
-                "Corporate earnings exceeding analyst expectations",
-                "Technology sector showing innovation leadership",
-                "Consumer spending patterns remaining robust",
-                "Merger and acquisition activity increasing",
-                "Dividend yields attractive in current environment"
-            ])
+            if "news" in sentiment_components:
+                sentiment_data.extend([
+                    "Corporate earnings exceeding analyst expectations",
+                    "Technology sector showing innovation leadership",
+                ])
+            
+            if "social" in sentiment_components:
+                sentiment_data.extend([
+                    "Consumer spending patterns remaining robust",
+                    "Retail investor sentiment improving",
+                ])
+            
+            if "institutional" in sentiment_components:
+                sentiment_data.extend([
+                    "Merger and acquisition activity increasing",
+                    "Dividend yields attractive in current environment",
+                ])
         
         elif category == "commodities":
-            sentiment_data.extend([
-                "Supply chain constraints supporting commodity prices",
-                "Green energy transition driving metal demand",
-                "Agricultural commodities benefiting from weather patterns",
-                "Industrial metals showing strong fundamentals",
-                "Energy markets responding to geopolitical factors"
-            ])
+            if "news" in sentiment_components:
+                sentiment_data.extend([
+                    "Supply chain constraints supporting commodity prices",
+                    "Green energy transition driving metal demand",
+                ])
+            
+            if "technical_sentiment" in sentiment_components:
+                sentiment_data.extend([
+                    "Agricultural commodities benefiting from weather patterns",
+                    "Industrial metals showing strong fundamentals",
+                    "Energy markets responding to geopolitical factors",
+                ])
         
         elif category == "futures":
-            sentiment_data.extend([
-                "Index futures reflecting market optimism",
-                "Sector rotation creating opportunities",
-                "Derivatives market showing healthy liquidity",
-                "Institutional hedging activity increasing",
-                "Calendar spreads indicating market structure strength"
-            ])
+            if "institutional" in sentiment_components:
+                sentiment_data.extend([
+                    "Index futures reflecting market optimism",
+                    "Institutional hedging activity increasing",
+                ])
+            
+            if "technical_sentiment" in sentiment_components:
+                sentiment_data.extend([
+                    "Sector rotation creating opportunities",
+                    "Derivatives market showing healthy liquidity",
+                    "Calendar spreads indicating market structure strength",
+                ])
         
         elif category == "warrants":
-            sentiment_data.extend([
-                "Warrant market showing increased retail participation",
-                "Leverage products gaining popularity",
-                "Underlying asset volatility supporting warrant premiums",
-                "European warrant markets showing innovation",
-                "Risk appetite supporting structured products"
-            ])
+            if "social" in sentiment_components:
+                sentiment_data.extend([
+                    "Warrant market showing increased retail participation",
+                    "Risk appetite supporting structured products",
+                ])
+            
+            if "technical_sentiment" in sentiment_components:
+                sentiment_data.extend([
+                    "Leverage products gaining popularity",
+                    "Underlying asset volatility supporting warrant premiums",
+                    "European warrant markets showing innovation",
+                ])
         
         elif category == "funds":
-            sentiment_data.extend([
-                "ETF inflows continuing across asset classes",
-                "Active management showing alpha generation",
-                "ESG funds attracting sustainable investment flows",
-                "International diversification gaining favor",
-                "Alternative investment strategies performing well"
-            ])
+            if "institutional" in sentiment_components:
+                sentiment_data.extend([
+                    "ETF inflows continuing across asset classes",
+                    "Active management showing alpha generation",
+                    "International diversification gaining favor",
+                ])
+            
+            if "news" in sentiment_components:
+                sentiment_data.extend([
+                    "ESG funds attracting sustainable investment flows",
+                    "Alternative investment strategies performing well",
+                ])
         
         print(f"✅ Collected {len(sentiment_data)} sentiment indicators for {category}")
         return sentiment_data
@@ -668,29 +731,49 @@ def run_enhanced_category_workflow() -> None:
     
     # Configuration
     print("\n" + "─" * 60)
-    print("📊 TECHNICAL INDICATOR SELECTION")
+    print("📊 ANALYSIS SETUP")
     print("─" * 60)
-    print("Select indicators for 2-week historical analysis:")
     
-    if ask_use_all_features():
-        use_rsi, use_sma, use_sentiment = True, True, True
-        selected_inds = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
-        print("🎯 Using ALL indicators for maximum analysis power!")
+    # Get complete feature configuration
+    from .terminal_ui import get_feature_configuration
+    feature_config = get_feature_configuration()
+    
+    use_all = feature_config["use_all"]
+    use_rsi = feature_config["use_rsi"]
+    use_sma = feature_config["use_sma"]
+    use_sentiment = feature_config["use_sentiment"]
+    use_ai = feature_config.get("use_ai", False)
+    selected_inds = feature_config["selected_indicators"]
+    sentiment_components = feature_config.get("sentiment_components", [])
+    ai_engines = feature_config.get("ai_engines", [])
+    
+    # Show final configuration summary
+    print("\n" + "─" * 50)
+    print("🎯 FINAL ANALYSIS CONFIGURATION:")
+    print("─" * 50)
+    
+    # AI Status
+    if use_ai and ai_engines:
+        if len(ai_engines) > 1:
+            print(f"🤖 AI Analysis: ✅ {' + '.join(ai_engines)} (Multi-AI)")
+        else:
+            print(f"🤖 AI Analysis: ✅ {ai_engines[0]}")
     else:
-        use_rsi = ask_use_rsi()
-        use_sma = ask_use_sma()
-        use_sentiment = ask_use_sentiment()
-        selected_inds = prompt_indicator_bundle().get("selected", [])
+        print("🤖 AI Analysis: ❌ Disabled")
     
-    # Configuration summary
-    print("\n" + "─" * 44)
-    print("📊 ANALYSIS CONFIGURATION:")
-    print(f"   📈 Technical Indicators: {len(selected_inds)} selected")
-    for ind in selected_inds:
-        print(f"      ✅ {ind}")
-    print(f"   💭 Sentiment Analysis: {'✅ Enabled' if use_sentiment else '❌ Disabled'}")
-    print(f"   🤖 AI Analysis: {'✅ Enabled' if ai_status['ai_available'] else '❌ Disabled'}")
-    print("─" * 44)
+    # Technical Indicators
+    if selected_inds:
+        print(f"📊 Technical Indicators ({len(selected_inds)}): {', '.join(selected_inds)}")
+    else:
+        print("📊 Technical Indicators: None")
+    
+    # Sentiment Analysis
+    if use_sentiment and sentiment_components:
+        print(f"💭 Sentiment Analysis ({len(sentiment_components)}): {', '.join(sentiment_components)}")
+    else:
+        print("💭 Sentiment Analysis: ❌ Disabled")
+    
+    print("─" * 50)
     
     # Step 2: Market selection
     category = get_user_choice()
@@ -743,22 +826,19 @@ def run_enhanced_category_workflow() -> None:
     enhanced_data = enhance_data_with_indicators(rows, selected_inds)
     pbar.update(1)
     
-    # Step 5: Collect sentiment data for ALL categories
-    sentiment_data = collect_universal_sentiment_data(category, use_sentiment)
+    # Step 5: Collect sentiment data for selected components
+    sentiment_data = collect_universal_sentiment_data(category, use_sentiment, sentiment_components)
     pbar.update(1)
     
     # Step 6: AI Analysis (support both OpenAI and Anthropic)
     print("🤖 Performing AI analysis for optimal trade selection...")
     
     try:
-        if ai_status["ai_available"]:
+        if ai_status["ai_available"] and use_ai:
             # Build comprehensive AI prompt
             ai_prompt = build_comprehensive_ai_prompt(
-                enhanced_data, sentiment_data, category, budget, market_ctx, ai_status["engines"]
+                enhanced_data, sentiment_data, category, budget, market_ctx, ai_engines
             )
-            
-            # Determine which engine to use
-            engine = "llm"  # This will use the first available AI engine
             
             # Use AI strategy with enhanced prompt
             recs = analyze_market(
@@ -772,24 +852,44 @@ def run_enhanced_category_workflow() -> None:
                 use_sentiment=use_sentiment,
                 market=market_ctx.get("market"),
                 market_context=market_ctx,
-                engine=engine,
+                engine="llm",  # Force LLM for AI analysis
                 enhanced_prompt=ai_prompt  # Custom prompt for 3-5% targets
             )
         else:
-            # Fallback to rules engine with enhanced data
-            recs = analyze_market(
-                market_data=enhanced_data,
-                budget=budget,
-                market_type=category,
-                history=[],
-                sentiment=sentiment_data,
-                use_rsi=use_rsi,
-                use_sma=use_sma,
-                use_sentiment=use_sentiment,
-                market=market_ctx.get("market"),
-                market_context=market_ctx,
-                engine="rules"
-            )
+            # Use rules engine - check if we should use analyze_market_batch instead
+            try:
+                from trading_core.strategy.rules_engine import analyze_market_batch
+                
+                # Create market context for rules engine
+                feature_flags = {
+                    "use_rsi": use_rsi,
+                    "use_sma": use_sma,
+                    "use_sentiment": use_sentiment,
+                    "selected_indicators": selected_inds,
+                    "sentiment_components": sentiment_components,
+                }
+                
+                recs = analyze_market_batch(
+                    rows=enhanced_data,
+                    market_ctx=market_ctx,
+                    feature_flags=feature_flags,
+                    budget=budget
+                )
+            except ImportError:
+                # Fallback to original analyze_market if rules_engine not available
+                recs = analyze_market(
+                    market_data=enhanced_data,
+                    budget=budget,
+                    market_type=category,
+                    history=[],
+                    sentiment=sentiment_data,
+                    use_rsi=use_rsi,
+                    use_sma=use_sma,
+                    use_sentiment=use_sentiment,
+                    market=market_ctx.get("market"),
+                    market_context=market_ctx,
+                    engine="rules"
+                )
         
         # Handle tuple returns
         if isinstance(recs, tuple):
