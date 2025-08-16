@@ -89,7 +89,7 @@ def get_ai_engine_status() -> Dict[str, Any]:
     print(f"[DEBUG] Raw Anthropic key length: {len(anthropic_key) if anthropic_key else 0}")
     
     # Check if keys are properly configured (not empty, not placeholder values)
-    def is_valid_key(key: str) -> bool:
+    def is_valid_key(key: str, key_type: str) -> bool:
         if not key or key.strip() == "":
             return False
         
@@ -97,25 +97,26 @@ def get_ai_engine_status() -> Dict[str, Any]:
         invalid_values = [
             "your_key_here", "YOUR_API_KEY", "your_openai_key_here", 
             "your_anthropic_key_here", "sk-your_openai_key_here", 
-            "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key"
+            "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key",
+            "your_api_key", "api_key_here", "insert_key_here"
         ]
         
-        if key.strip() in invalid_values:
+        if key.strip().lower() in [v.lower() for v in invalid_values]:
             return False
         
-        # OpenAI keys should start with "sk-"
-        if "openai" in key.lower() or key.startswith("sk-"):
-            return key.startswith("sk-") and len(key) > 20
+        # Specific validation by key type
+        if key_type == "openai":
+            # OpenAI keys should start with "sk-" and be reasonably long
+            return key.startswith("sk-") and len(key) > 40
+        elif key_type == "anthropic":
+            # Anthropic keys should start with "sk-ant-" and be reasonably long
+            return key.startswith("sk-ant-") and len(key) > 50
         
-        # Anthropic keys should start with "sk-ant-"
-        if "anthropic" in key.lower() or key.startswith("sk-ant-"):
-            return key.startswith("sk-ant-") and len(key) > 30
-        
-        # Generic check - has reasonable length
-        return len(key.strip()) > 10
+        # Generic fallback
+        return len(key.strip()) > 20
     
-    openai_available = is_valid_key(openai_key)
-    anthropic_available = is_valid_key(anthropic_key)
+    openai_available = is_valid_key(openai_key, "openai")
+    anthropic_available = is_valid_key(anthropic_key, "anthropic")
     
     print(f"[DEBUG] OpenAI key valid: {openai_available}")
     print(f"[DEBUG] Anthropic key valid: {anthropic_available}")
