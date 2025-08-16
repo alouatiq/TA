@@ -91,6 +91,10 @@ setup-env: ## Create .env file from template
 			echo "# Trading Assistant API Keys" > $(ENV_FILE); \
 			echo "# Add your API keys below (optional but recommended)" >> $(ENV_FILE); \
 			echo "" >> $(ENV_FILE); \
+			echo "# Core runtime" >> $(ENV_FILE); \
+			echo "PYTHONUNBUFFERED=1" >> $(ENV_FILE); \
+			echo "PYTHONIOENCODING=utf-8" >> $(ENV_FILE); \
+			echo "" >> $(ENV_FILE); \
 			echo "# Financial Data APIs" >> $(ENV_FILE); \
 			echo "TWELVEDATA_API_KEY=" >> $(ENV_FILE); \
 			echo "ALPHA_VANTAGE_API_KEY=" >> $(ENV_FILE); \
@@ -99,6 +103,13 @@ setup-env: ## Create .env file from template
 			echo "# AI APIs (for advanced features)" >> $(ENV_FILE); \
 			echo "OPENAI_API_KEY=" >> $(ENV_FILE); \
 			echo "ANTHROPIC_API_KEY=" >> $(ENV_FILE); \
+			echo "" >> $(ENV_FILE); \
+			echo "# Logging / diagnostics" >> $(ENV_FILE); \
+			echo "LOG_LEVEL=INFO" >> $(ENV_FILE); \
+			echo "" >> $(ENV_FILE); \
+			echo "# Regional defaults (optional)" >> $(ENV_FILE); \
+			echo "DEFAULT_REGION=Europe" >> $(ENV_FILE); \
+			echo "DEFAULT_MARKET=LSE" >> $(ENV_FILE); \
 			echo "" >> $(ENV_FILE); \
 			echo "# Optional: HTTP settings" >> $(ENV_FILE); \
 			echo "HTTP_UA=Mozilla/5.0 (compatible; TradingAssistant/1.0)" >> $(ENV_FILE); \
@@ -149,68 +160,74 @@ _interactive_api_setup:
 	@echo ""
 	@echo "$(GREEN)📊 Financial Data APIs$(NC)"
 	@echo "=========================="
-	@printf "Enter TwelveData API key"; \
-	current_key=$(grep "^TWELVEDATA_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-	if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
+	@current_key=$$(grep "^TWELVEDATA_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	printf "Enter TwelveData API key"; \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "welvedata_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
 		printf " (currently: ✅ configured, press Enter to keep): "; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		printf " (currently: ⚠️  placeholder, enter real key): "; \
 	else \
 		printf " (currently: ❌ not set, or press Enter to skip): "; \
 	fi; \
 	read twelvedata_key; \
-	if [ ! -z "$twelvedata_key" ]; then \
+	if [ ! -z "$$twelvedata_key" ]; then \
 		if grep -q "TWELVEDATA_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$twelvedata_key/" $(ENV_FILE); \
+			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$$twelvedata_key/" $(ENV_FILE); \
 		else \
-			echo "TWELVEDATA_API_KEY=$twelvedata_key" >> $(ENV_FILE); \
+			echo "TWELVEDATA_API_KEY=$$twelvedata_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ TwelveData API key saved$(NC)"; \
 	else \
-		if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
-			echo "$(BLUE)🔄 TwelveData API key kept (existing configuration)$(NC)"; \
+		if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "welvedata_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
+			echo "$(BLUE)🔄 TwelveData API key kept (existing)$(NC)"; \
 		else \
 			echo "$(YELLOW)⏭️  TwelveData API key skipped$(NC)"; \
 		fi; \
 	fi
-	@printf "Enter Alpha Vantage API key"; \
-	current_key=$(grep "^ALPHA_VANTAGE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-	if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
+	@current_key=$$(grep "^ALPHA_VANTAGE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	printf "Enter Alpha Vantage API key"; \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "lphavantage_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
 		printf " (currently: ✅ configured, press Enter to keep): "; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		printf " (currently: ⚠️  placeholder, enter real key): "; \
 	else \
 		printf " (currently: ❌ not set, or press Enter to skip): "; \
 	fi; \
 	read alphavantage_key; \
-	if [ ! -z "$alphavantage_key" ]; then \
+	if [ ! -z "$$alphavantage_key" ]; then \
 		if grep -q "ALPHA_VANTAGE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$alphavantage_key/" $(ENV_FILE); \
+			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$$alphavantage_key/" $(ENV_FILE); \
 		else \
-			echo "ALPHA_VANTAGE_API_KEY=$alphavantage_key" >> $(ENV_FILE); \
+			echo "ALPHA_VANTAGE_API_KEY=$$alphavantage_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Alpha Vantage API key saved$(NC)"; \
 	else \
-		if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
-			echo "$(BLUE)🔄 Alpha Vantage API key kept (existing configuration)$(NC)"; \
+		if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "lphavantage_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
+			echo "$(BLUE)🔄 Alpha Vantage API key kept (existing)$(NC)"; \
 		else \
 			echo "$(YELLOW)⏭️  Alpha Vantage API key skipped$(NC)"; \
 		fi; \
 	fi
-	@printf "Enter CryptoCompare API key"; \
-	current_key=$(grep "^CRYPTOCOMPARE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-	if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
+	@current_key=$$(grep "^CRYPTOCOMPARE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	printf "Enter CryptoCompare API key"; \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "ryptocompare_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
 		printf " (currently: ✅ configured, press Enter to keep): "; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		printf " (currently: ⚠️  placeholder, enter real key): "; \
 	else \
 		printf " (currently: ❌ not set, or press Enter to skip): "; \
 	fi; \
 	read cryptocompare_key; \
-	if [ ! -z "$cryptocompare_key" ]; then \
+	if [ ! -z "$$cryptocompare_key" ]; then \
 		if grep -q "CRYPTOCOMPARE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$cryptocompare_key/" $(ENV_FILE); \
+			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$$cryptocompare_key/" $(ENV_FILE); \
 		else \
-			echo "CRYPTOCOMPARE_API_KEY=$cryptocompare_key" >> $(ENV_FILE); \
+			echo "CRYPTOCOMPARE_API_KEY=$$cryptocompare_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ CryptoCompare API key saved$(NC)"; \
 	else \
-		if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
-			echo "$(BLUE)🔄 CryptoCompare API key kept (existing configuration)$(NC)"; \
+		if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "ryptocompare_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
+			echo "$(BLUE)🔄 CryptoCompare API key kept (existing)$(NC)"; \
 		else \
 			echo "$(YELLOW)⏭️  CryptoCompare API key skipped$(NC)"; \
 		fi; \
@@ -218,46 +235,50 @@ _interactive_api_setup:
 	@echo ""
 	@echo "$(PURPLE)🤖 AI APIs (Optional)$(NC)"
 	@echo "======================"
-	@printf "Enter OpenAI API key"; \
-	current_key=$(grep "^OPENAI_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-	if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
+	@current_key=$$(grep "^OPENAI_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	printf "Enter OpenAI API key"; \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "penai_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
 		printf " (currently: ✅ configured, press Enter to keep): "; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		printf " (currently: ⚠️  placeholder, enter real key): "; \
 	else \
 		printf " (currently: ❌ not set, or press Enter to skip): "; \
 	fi; \
 	read openai_key; \
-	if [ ! -z "$openai_key" ]; then \
+	if [ ! -z "$$openai_key" ]; then \
 		if grep -q "OPENAI_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$openai_key/" $(ENV_FILE); \
+			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$$openai_key/" $(ENV_FILE); \
 		else \
-			echo "OPENAI_API_KEY=$openai_key" >> $(ENV_FILE); \
+			echo "OPENAI_API_KEY=$$openai_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ OpenAI API key saved$(NC)"; \
 	else \
-		if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
-			echo "$(BLUE)🔄 OpenAI API key kept (existing configuration)$(NC)"; \
+		if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "penai_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
+			echo "$(BLUE)🔄 OpenAI API key kept (existing)$(NC)"; \
 		else \
 			echo "$(YELLOW)⏭️  OpenAI API key skipped$(NC)"; \
 		fi; \
 	fi
-	@printf "Enter Anthropic API key"; \
-	current_key=$(grep "^ANTHROPIC_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-	if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
+	@current_key=$$(grep "^ANTHROPIC_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	printf "Enter Anthropic API key"; \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "nthropic_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
 		printf " (currently: ✅ configured, press Enter to keep): "; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		printf " (currently: ⚠️  placeholder, enter real key): "; \
 	else \
 		printf " (currently: ❌ not set, or press Enter to skip): "; \
 	fi; \
 	read anthropic_key; \
-	if [ ! -z "$anthropic_key" ]; then \
+	if [ ! -z "$$anthropic_key" ]; then \
 		if grep -q "ANTHROPIC_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$anthropic_key/" $(ENV_FILE); \
+			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$$anthropic_key/" $(ENV_FILE); \
 		else \
-			echo "ANTHROPIC_API_KEY=$anthropic_key" >> $(ENV_FILE); \
+			echo "ANTHROPIC_API_KEY=$$anthropic_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Anthropic API key saved$(NC)"; \
 	else \
-		if [ -n "$current_key" ] && [ "$current_key" != "" ]; then \
-			echo "$(BLUE)🔄 Anthropic API key kept (existing configuration)$(NC)"; \
+		if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "nthropic_key" ] && [ "$$current_key" != "YOUR_API_KEY" ]; then \
+			echo "$(BLUE)🔄 Anthropic API key kept (existing)$(NC)"; \
 		else \
 			echo "$(YELLOW)⏭️  Anthropic API key skipped$(NC)"; \
 		fi; \
@@ -271,35 +292,56 @@ _interactive_api_setup:
 check-api: venv ## Check API key configuration status
 	@echo "$(CYAN)🔍 Checking API Configuration$(NC)"
 	@echo "================================="
-	@if [ -f "$(ENV_FILE)" ]; then \
-		echo "📊 Financial Data APIs:"; \
-		for api_info in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY Alpha_Vantage" "CRYPTOCOMPARE_API_KEY CryptoCompare"; do \
-			api_key=$(echo $api_info | cut -d' ' -f1); \
-			api_name=$(echo $api_info | cut -d' ' -f2); \
-			api_value=$(grep "^$api_key=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-			if [ -n "$api_value" ] && [ "$api_value" != "" ]; then \
-				echo "   $api_name: ✅ Configured"; \
-			else \
-				echo "   $api_name: ❌ Not configured"; \
-			fi; \
-		done; \
-		echo ""; \
-		echo "🤖 AI APIs:"; \
-		for api_info in "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
-			api_key=$(echo $api_info | cut -d' ' -f1); \
-			api_name=$(echo $api_info | cut -d' ' -f2); \
-			api_value=$(grep "^$api_key=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
-			if [ -n "$api_value" ] && [ "$api_value" != "" ]; then \
-				echo "   $api_name: ✅ Configured"; \
-			else \
-				echo "   $api_name: ❌ Not configured"; \
-			fi; \
-		done; \
-		echo ""; \
-		echo "💡 To configure missing APIs: make setup-api"; \
-	else \
+	@if [ ! -f "$(ENV_FILE)" ]; then \
 		echo "❌ .env file not found. Run: make setup-env"; \
+		exit 1; \
 	fi
+	@echo "📊 Financial Data APIs:"
+	@current_key=$$(grep "^TWELVEDATA_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "welvedata_key" ] && [ "$$current_key" != "YOUR_API_KEY" ] && [ "$${#current_key}" -gt 10 ]; then \
+		echo "   TwelveData: ✅ Configured"; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		echo "   TwelveData: ⚠️  Placeholder detected"; \
+	else \
+		echo "   TwelveData: ❌ Not configured"; \
+	fi
+	@current_key=$$(grep "^ALPHA_VANTAGE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "lphavantage_key" ] && [ "$$current_key" != "YOUR_API_KEY" ] && [ "$${#current_key}" -gt 10 ]; then \
+		echo "   Alpha_Vantage: ✅ Configured"; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		echo "   Alpha_Vantage: ⚠️  Placeholder detected"; \
+	else \
+		echo "   Alpha_Vantage: ❌ Not configured"; \
+	fi
+	@current_key=$$(grep "^CRYPTOCOMPARE_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "ryptocompare_key" ] && [ "$$current_key" != "YOUR_API_KEY" ] && [ "$${#current_key}" -gt 10 ]; then \
+		echo "   CryptoCompare: ✅ Configured"; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		echo "   CryptoCompare: ⚠️  Placeholder detected"; \
+	else \
+		echo "   CryptoCompare: ❌ Not configured"; \
+	fi
+	@echo ""
+	@echo "🤖 AI APIs:"
+	@current_key=$$(grep "^OPENAI_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "penai_key" ] && [ "$$current_key" != "YOUR_API_KEY" ] && [ "$${#current_key}" -gt 10 ]; then \
+		echo "   OpenAI: ✅ Configured"; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		echo "   OpenAI: ⚠️  Placeholder detected"; \
+	else \
+		echo "   OpenAI: ❌ Not configured"; \
+	fi
+	@current_key=$$(grep "^ANTHROPIC_API_KEY=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$$//'); \
+	if [ -n "$$current_key" ] && [ "$$current_key" != "" ] && [ "$$current_key" != "nthropic_key" ] && [ "$$current_key" != "YOUR_API_KEY" ] && [ "$${#current_key}" -gt 10 ]; then \
+		echo "   Anthropic: ✅ Configured"; \
+	elif [ -n "$$current_key" ] && [ "$$current_key" != "" ]; then \
+		echo "   Anthropic: ⚠️  Placeholder detected"; \
+	else \
+		echo "   Anthropic: ❌ Not configured"; \
+	fi
+	@echo ""
+	@echo "💡 To configure missing APIs: make setup-api"
+	@echo "⚠️  Replace placeholder values with real API keys"
 
 .PHONY: show-api-info
 show-api-info: ## Show information about supported APIs
@@ -421,26 +463,26 @@ status: ## Show project status and configuration
 	@echo "=================="
 	@echo ""
 	@echo "$(BLUE)Environment:$(NC)"
-	@echo "  Python: $$($(PYTHON) --version 2>&1)"
-	@echo "  Virtual Environment: $$(if [ -d "$(VENV_DIR)" ]; then echo "✅ Present"; else echo "❌ Missing"; fi)"
-	@echo "  Requirements: $$(if [ -f "$(REQUIREMENTS)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
-	@echo "  Environment File: $$(if [ -f "$(ENV_FILE)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
+	@echo "  Python: $($(PYTHON) --version 2>&1)"
+	@echo "  Virtual Environment: $(if [ -d "$(VENV_DIR)" ]; then echo "✅ Present"; else echo "❌ Missing"; fi)"
+	@echo "  Requirements: $(if [ -f "$(REQUIREMENTS)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
+	@echo "  Environment File: $(if [ -f "$(ENV_FILE)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
 	@echo ""
 	@if [ -f "$(ENV_FILE)" ]; then \
 		echo "$(BLUE)API Configuration:$(NC)"; \
 		configured_count=0; \
 		total_count=5; \
-		for api_info in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY AlphaVantage" "CRYPTOCOMPARE_API_KEY CryptoCompare" "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
-			api_key=$$(echo $$api_info | cut -d' ' -f1); \
-			api_name=$$(echo $$api_info | cut -d' ' -f2); \
-			if grep -q "^$$api_key=" $(ENV_FILE) && [ -n "$$(grep "^$$api_key=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
-				echo "  $$api_name: ✅"; \
-				configured_count=$$((configured_count + 1)); \
+		for api_key in "TWELVEDATA_API_KEY" "ALPHA_VANTAGE_API_KEY" "CRYPTOCOMPARE_API_KEY" "OPENAI_API_KEY" "ANTHROPIC_API_KEY"; do \
+			current_key=$(grep "^$api_key=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
+			api_display=$(echo $api_key | sed 's/_API_KEY//' | sed 's/_/ /g'); \
+			if [ -n "$current_key" ] && [ "$current_key" != "" ] && [ "${#current_key}" -gt 10 ]; then \
+				echo "  $api_display: ✅"; \
+				configured_count=$((configured_count + 1)); \
 			else \
-				echo "  $$api_name: ❌"; \
+				echo "  $api_display: ❌"; \
 			fi; \
 		done; \
-		echo "  Total: $$configured_count/$$total_count APIs configured"; \
+		echo "  Total: $configured_count/$total_count APIs configured"; \
 	fi
 	@echo ""
 	@echo "$(BLUE)Quick Commands:$(NC)"
@@ -454,8 +496,8 @@ version: ## Show version information
 	@echo "$(CYAN)Trading Assistant Backend$(NC)"
 	@echo "=========================="
 	@echo "Version: 1.0.0-beta"
-	@echo "Python: $$($(PYTHON) --version 2>&1)"
-	@echo "Make: $$(make --version | head -n1)"
+	@echo "Python: $($(PYTHON) --version 2>&1)"
+	@echo "Make: $(make --version | head -n1)"
 	@echo ""
 	@echo "$(BLUE)For more information, visit: https://github.com/your-repo/trading-assistant$(NC)"
 
@@ -490,12 +532,61 @@ docker-run: ## Run in Docker container
 .PHONY: backup-config
 backup-config: ## Backup configuration files
 	@echo "$(BLUE)💾 Backing up configuration...$(NC)"
-	@timestamp=$$(date +%Y%m%d_%H%M%S); \
-	backup_dir="backup_$$timestamp"; \
-	mkdir -p "$$backup_dir"; \
-	if [ -f "$(ENV_FILE)" ]; then cp $(ENV_FILE) "$$backup_dir/"; fi; \
-	if [ -f "$(REQUIREMENTS)" ]; then cp $(REQUIREMENTS) "$$backup_dir/"; fi; \
-	echo "$(GREEN)✅ Configuration backed up to $$backup_dir$(NC)"
+	@timestamp=$(date +%Y%m%d_%H%M%S); \
+	backup_dir="backup_$timestamp"; \
+	mkdir -p "$backup_dir"; \
+	if [ -f "$(ENV_FILE)" ]; then cp $(ENV_FILE) "$backup_dir/"; fi; \
+	if [ -f "$(REQUIREMENTS)" ]; then cp $(REQUIREMENTS) "$backup_dir/"; fi; \
+	echo "$(GREEN)✅ Configuration backed up to $backup_dir$(NC)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utility Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: clean-env
+clean-env: ## Clean .env file of placeholder values
+	@echo "$(BLUE)🧹 Cleaning placeholder values from .env file...$(NC)"
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "Backing up current .env to .env.backup..."; \
+		cp $(ENV_FILE) $(ENV_FILE).backup; \
+		echo "Cleaning placeholder values..."; \
+		sed -i 's/TWELVEDATA_API_KEY=welvedata_key/TWELVEDATA_API_KEY=/g' $(ENV_FILE); \
+		sed -i 's/ALPHA_VANTAGE_API_KEY=lphavantage_key/ALPHA_VANTAGE_API_KEY=/g' $(ENV_FILE); \
+		sed -i 's/CRYPTOCOMPARE_API_KEY=ryptocompare_key/CRYPTOCOMPARE_API_KEY=/g' $(ENV_FILE); \
+		sed -i 's/OPENAI_API_KEY=penai_key/OPENAI_API_KEY=/g' $(ENV_FILE); \
+		sed -i 's/ANTHROPIC_API_KEY=nthropic_key/ANTHROPIC_API_KEY=/g' $(ENV_FILE); \
+		sed -i 's/=YOUR_API_KEY/=/g' $(ENV_FILE); \
+		sed -i 's/=your_key_here/=/g' $(ENV_FILE); \
+		echo "$(GREEN)✅ Placeholder values cleaned$(NC)"; \
+		echo "$(BLUE)💡 Backup saved as .env.backup$(NC)"; \
+	else \
+		echo "$(RED)❌ .env file not found$(NC)"; \
+	fi
+
+.PHONY: debug-env
+debug-env: ## Debug .env file contents
+	@echo "$(CYAN)🔍 Debugging .env Configuration$(NC)"
+	@echo "=================================="
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "📁 .env file found. Contents:"; \
+		echo ""; \
+		cat $(ENV_FILE); \
+		echo ""; \
+		echo "🔍 API Key Analysis:"; \
+		for api_key in "TWELVEDATA_API_KEY" "ALPHA_VANTAGE_API_KEY" "CRYPTOCOMPARE_API_KEY" "OPENAI_API_KEY" "ANTHROPIC_API_KEY"; do \
+			current_key=$(grep "^$api_key=" $(ENV_FILE) 2>/dev/null | cut -d'=' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//'); \
+			api_display=$(echo $api_key | sed 's/_API_KEY//'); \
+			if [ -z "$current_key" ]; then \
+				echo "  $api_display: ❌ Not found in file"; \
+			elif [ "$current_key" = "" ]; then \
+				echo "  $api_display: ⚪ Empty value"; \
+			else \
+				echo "  $api_display: 📝 Value present ($&#123;current_key&#125;) - ${#current_key} chars"; \
+			fi; \
+		done; \
+	else \
+		echo "❌ .env file not found"; \
+	fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Help Functions
@@ -504,4 +595,4 @@ backup-config: ## Backup configuration files
 .PHONY: list-targets
 list-targets: ## List all available make targets
 	@echo "$(CYAN)Available Make Targets:$(NC)"
-	@$(MAKE) -pRrq -f $(MAKEFILE_LIST) : 2>/dev/null | awk -v RS= -F: '/^# File/,/^# Finished Make data base/ {if ($$1 !~ "^[#.]") {print $$1}}' | sort | egrep -v -e '^[^[:alnum:]]' -e '^$@$$'
+	@$(MAKE) -pRrq -f $(MAKEFILE_LIST) : 2>/dev/null | awk -v RS= -F: '/^# File/,/^# Finished Make data base/ {if ($1 !~ "^[#.]") {print $1}}' | sort | egrep -v -e '^[^[:alnum:]]' -e '^$@$'
