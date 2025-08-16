@@ -21,8 +21,8 @@ Usage
 from trading_core.data_fetcher.adapters.coingecko import CoinGeckoAdapter
 
 cg = CoinGeckoAdapter()
-coins = cg.top_coins(vs_currency="usd", per_page=25)  # discovery + quotes
-hist  = cg.market_chart("bitcoin", vs_currency="usd", days=15, interval="daily")
+coins = cg.get_markets(vs_currency="usd", per_page=25)  # discovery + quotes
+hist  = cg.get_market_chart("bitcoin", vs_currency="usd", days=15, interval="daily")
 spot  = cg.simple_price(ids=["bitcoin","ethereum"], vs_currency="usd")
 """
 
@@ -60,124 +60,201 @@ class CoinGeckoAdapter:
             {"User-Agent": "TA/1.0 (+https://example.local) python-requests"}
         )
 
-    # ──────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────────
     # Internal: request with retries/backoff
-    # ──────────────────────────────────────────────────────
-    def _request(self, method: str, path: str, *, params: Optional[Dict[str, Any]] = None) -> Any:
+    # ────────────────────────────────────────────────────────────────────────────
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        HTTP request with exponential backoff on rate limits.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: API endpoint path (e.g., "/coins/markets")
+            params: URL query parameters
+            json_data: JSON request body
+            
+        Returns:
+            Parsed JSON response
+            
+        Raises:
+            CoinGeckoHTTPError: On persistent HTTP errors
+        """
         url = f"{self.base_url}{path}"
-        backoff = BACKOFF_START_S
-        last_exc: Optional[Exception] = None
-
+        
         for attempt in range(MAX_RETRIES):
             try:
-                resp = self.session.request(
-                    method.upper(), url, params=params, timeout=self.timeout
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    json=json_data,
+                    timeout=self.timeout,
                 )
-                # Basic retry on 429 / 5xx
-                if resp.status_code == 429 or 500 <= resp.status_code < 600:
-                    # Try to respect Retry-After when present
-                    ra = resp.headers.get("Retry-After")
-                    if ra:
-                        try:
-                            wait_s = float(ra)
-                        except Exception:
-                            wait_s = backoff
+                
+                # Handle rate limiting
+                if response.status_code == 429:
+                    if attempt < MAX_RETRIES - 1:
+                        backoff_time = BACKOFF_START_S * (2 ** attempt)
+                        time.sleep(backoff_time)
+                        continue
                     else:
-                        wait_s = backoff
-                    time.sleep(wait_s)
-                    backoff *= 2
+                        raise CoinGeckoHTTPError(f"Rate limited after {MAX_RETRIES} attempts")
+                
+                # Handle other HTTP errors
+                if not response.ok:
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(BACKOFF_START_S)
+                        continue
+                    else:
+                        raise CoinGeckoHTTPError(
+                            f"HTTP {response.status_code}: {response.text[:200]}"
+                        )
+                
+                # Success - parse JSON
+                try:
+                    return response.json()
+                except ValueError as e:
+                    raise CoinGeckoHTTPError(f"Invalid JSON response: {e}")
+                    
+            except requests.RequestException as e:
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(BACKOFF_START_S * (2 ** attempt))
                     continue
+                else:
+                    raise CoinGeckoHTTPError(f"Request failed after {MAX_RETRIES} attempts: {e}")
+        
+        # Should never reach here, but just in case
+        raise CoinGeckoHTTPError("Unexpected error in request handling")
 
-                if resp.status_code != 200:
-                    raise CoinGeckoHTTPError(
-                        f"HTTP {resp.status_code} on {path} (params={params})"
-                    )
-
-                # OK
-                return resp.json()
-
-            except (requests.Timeout, requests.ConnectionError) as e:
-                last_exc = e
-                time.sleep(backoff)
-                backoff *= 2
-                continue
-            except ValueError as e:
-                # JSON decode error → don't retry infinitely
-                raise CoinGeckoHTTPError(f"Invalid JSON from {path}: {e}") from e
-
-        if last_exc:
-            raise CoinGeckoHTTPError(
-                f"Failed after {MAX_RETRIES} attempts for {path}: {last_exc}"
-            )
-        raise CoinGeckoHTTPError(f"Failed after {MAX_RETRIES} attempts for {path}")
-
-    # ──────────────────────────────────────────────────────
-    # Public endpoints
-    # ──────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────────
+    # Public API methods
+    # ────────────────────────────────────────────────────────────────────────────
+    
     def ping(self) -> bool:
+        """
+        Health check endpoint.
+        
+        Returns:
+            True if CoinGecko API is responsive, False otherwise
+        """
         try:
-            data = self._request("GET", "/ping")
-            return bool(data and data.get("gecko_says"))
+            response = self._request("GET", "/ping")
+            return response.get("gecko_says") == "(V3) To the Moon!"
         except Exception:
             return False
+
+    def get_markets(
+        self,
+        *,
+        vs_currency: str = "usd",
+        order: str = "market_cap_desc",
+        per_page: int = 100,
+        page: int = 1,
+        sparkline: bool = False,
+        price_change_percentage: str = "24h",
+    ) -> List[Dict[str, Any]]:
+        """
+        Get cryptocurrency market data (prices, market cap, volume, etc.)
+        
+        This is the main discovery endpoint that replaces the missing method.
+        
+        Args:
+            vs_currency: Target currency for prices (default: "usd")
+            order: Sort order (market_cap_desc, volume_desc, etc.)
+            per_page: Number of results per page (1-250)
+            page: Page number
+            sparkline: Include 7-day price sparkline data
+            price_change_percentage: Include price change % for timeframes
+            
+        Returns:
+            List of coin market data dictionaries
+        """
+        params = {
+            "vs_currency": vs_currency,
+            "order": order,
+            "per_page": min(per_page, 250),  # API limit
+            "page": page,
+            "sparkline": "true" if sparkline else "false",
+            "price_change_percentage": price_change_percentage,
+        }
+        
+        response = self._request("GET", "/coins/markets", params=params)
+        
+        # Ensure we return a list even if API returns something unexpected
+        if isinstance(response, list):
+            return response
+        else:
+            return []
 
     def top_coins(
         self,
         *,
         vs_currency: str = "usd",
-        order: str = "volume_desc",   # also: "market_cap_desc"
-        per_page: int = 30,
-        page: int = 1,
-        sparkline: bool = False,
-        price_change_percentage: Optional[str] = None,  # e.g., "1h,24h,7d"
+        per_page: int = 50,
+        order: str = "volume_desc",
     ) -> List[Dict[str, Any]]:
         """
-        Discover + quote top coins. Normalized keys:
-        - id, symbol, name
-        - price (current_price), volume (total_volume), market_cap
-        - high_24h, low_24h, day_range_pct (computed)
-        - price_change_pct_* (when requested)
+        Convenience method to get top coins by volume.
+        
+        Args:
+            vs_currency: Target currency for prices
+            per_page: Number of coins to return
+            order: Sort order for results
+            
+        Returns:
+            List of top cryptocurrency market data
+        """
+        return self.get_markets(
+            vs_currency=vs_currency,
+            per_page=per_page,
+            order=order,
+            sparkline=False,
+        )
+
+    def get_market_chart(
+        self,
+        coin_id: str,
+        *,
+        vs_currency: str = "usd",
+        days: int = 30,
+        interval: str = "daily",
+        want: str = "prices",
+    ) -> Dict[str, Any]:
+        """
+        Historical market data for a specific coin.
+        
+        Args:
+            coin_id: CoinGecko coin identifier (e.g., "bitcoin")
+            vs_currency: Target currency
+            days: Number of days of historical data
+            interval: Data interval ("daily", "hourly")
+            want: Data type to extract ("prices", "market_caps", "total_volumes")
+            
+        Returns:
+            Dictionary with coin_id, vs_currency, interval, and time series data
         """
         params = {
             "vs_currency": vs_currency,
-            "order": order,
-            "per_page": max(1, min(per_page, 250)),
-            "page": max(1, page),
-            "sparkline": "true" if sparkline else "false",
+            "days": max(1, days),
+            "interval": interval,
         }
-        if price_change_percentage:
-            params["price_change_percentage"] = price_change_percentage
-
-        raw = self._request("GET", "/coins/markets", params=params)
-        out: List[Dict[str, Any]] = []
-        for row in raw or []:
-            price = row.get("current_price")
-            high  = row.get("high_24h")
-            low   = row.get("low_24h")
-            try:
-                drp = round(((high - low) / price) * 100, 2) if price and high and low and price != 0 else None
-            except Exception:
-                drp = None
-
-            rec: Dict[str, Any] = {
-                "id": row.get("id"),
-                "symbol": (row.get("symbol") or "").upper(),
-                "name": row.get("name"),
-                "price": price,
-                "volume": row.get("total_volume", 0),
-                "market_cap": row.get("market_cap"),
-                "high_24h": high,
-                "low_24h": low,
-                "day_range_pct": drp,
-            }
-            if price_change_percentage:
-                # CoinGecko returns e.g. "price_change_percentage_24h_in_currency"
-                for horizon in (h.strip() for h in price_change_percentage.split(",") if h.strip()):
-                    key = f"price_change_percentage_{horizon}_in_currency"
-                    if key in row:
-                        rec[f"price_change_pct_{horizon}"] = row.get(key)
-            out.append(rec)
-        return out
+        
+        data = self._request("GET", f"/coins/{coin_id}/market_chart", params=params)
+        series = data.get(want, [])
+        
+        # Keep only last N points if caller passed non-sense days (server may return more)
+        return {
+            "coin_id": coin_id,
+            "vs": vs_currency,
+            "interval": interval,
+            "series": [(int(t), float(v)) for t, v in series if isinstance(t, (int, float))],
+        }
 
     def market_chart(
         self,
@@ -186,28 +263,26 @@ class CoinGeckoAdapter:
         vs_currency: str = "usd",
         days: int = 30,
         interval: str = "daily",
-        want: str = "prices",  # "prices" | "market_caps" | "total_volumes"
     ) -> Dict[str, Any]:
         """
-        Get simple arrays of [timestamp, value] for the desired series.
-        - interval: "daily" is great for indicators (RSI-14 etc.)
-        - days: 1..max
-        Returns: {"series": [(ts_ms, value), ...], "coin_id": coin_id, "vs": vs_currency, "interval": interval}
+        Alias for get_market_chart for backward compatibility.
+        
+        Args:
+            coin_id: CoinGecko coin identifier
+            vs_currency: Target currency
+            days: Number of days of historical data
+            interval: Data interval
+            
+        Returns:
+            Historical price data
         """
-        params = {
-            "vs_currency": vs_currency,
-            "days": max(1, days),
-            "interval": interval,
-        }
-        data = self._request("GET", f"/coins/{coin_id}/market_chart", params=params)
-        series = data.get(want, [])
-        # Keep only last N points if caller passed non-sense days (server may return more)
-        return {
-            "coin_id": coin_id,
-            "vs": vs_currency,
-            "interval": interval,
-            "series": [(int(t), float(v)) for t, v in series if isinstance(t, (int, float))],
-        }
+        return self.get_market_chart(
+            coin_id=coin_id,
+            vs_currency=vs_currency,
+            days=days,
+            interval=interval,
+            want="prices"
+        )
 
     def simple_price(
         self,
@@ -220,10 +295,20 @@ class CoinGeckoAdapter:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Quick spot price lookup for specific CoinGecko ids.
-        Returns a dict: {id: {"price": float, "market_cap":?, "volume_24h":?, "change_24h_pct":?}}
+        
+        Args:
+            ids: List of CoinGecko coin IDs
+            vs_currency: Target currency
+            include_market_cap: Include market cap data
+            include_24hr_vol: Include 24h volume data
+            include_24hr_change: Include 24h price change data
+            
+        Returns:
+            Dictionary mapping coin_id to price data
         """
         if not ids:
             return {}
+            
         params = {
             "ids": ",".join(ids),
             "vs_currencies": vs_currency,
@@ -231,8 +316,10 @@ class CoinGeckoAdapter:
             "include_24hr_vol": "true" if include_24hr_vol else "false",
             "include_24hr_change": "true" if include_24hr_change else "false",
         }
+        
         raw = self._request("GET", "/simple/price", params=params)
         out: Dict[str, Dict[str, Any]] = {}
+        
         for cid, payload in (raw or {}).items():
             rec: Dict[str, Any] = {"price": payload.get(vs_currency)}
             if include_market_cap:
@@ -242,4 +329,170 @@ class CoinGeckoAdapter:
             if include_24hr_change:
                 rec["change_24h_pct"] = payload.get(f"{vs_currency}_24h_change")
             out[cid] = rec
+            
         return out
+
+    def get_coin(
+        self,
+        coin_id: str,
+        *,
+        localization: bool = False,
+        tickers: bool = False,
+        market_data: bool = True,
+        community_data: bool = False,
+        developer_data: bool = False,
+        sparkline: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a specific coin.
+        
+        Args:
+            coin_id: CoinGecko coin identifier
+            localization: Include localized text
+            tickers: Include ticker data
+            market_data: Include market data
+            community_data: Include community statistics
+            developer_data: Include developer statistics
+            sparkline: Include price sparkline
+            
+        Returns:
+            Detailed coin information or None if not found
+        """
+        params = {
+            "localization": "true" if localization else "false",
+            "tickers": "true" if tickers else "false",
+            "market_data": "true" if market_data else "false",
+            "community_data": "true" if community_data else "false",
+            "developer_data": "true" if developer_data else "false",
+            "sparkline": "true" if sparkline else "false",
+        }
+        
+        try:
+            return self._request("GET", f"/coins/{coin_id}", params=params)
+        except CoinGeckoHTTPError:
+            return None
+
+    def search(self, query: str) -> Dict[str, Any]:
+        """
+        Search for coins, exchanges, and categories.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            Search results with coins, exchanges, and categories
+        """
+        params = {"query": query}
+        return self._request("GET", "/search", params=params)
+
+    def get_coins_list(self, include_platform: bool = False) -> List[Dict[str, Any]]:
+        """
+        Get list of all supported coins with id, name, and symbol.
+        
+        Args:
+            include_platform: Include platform contract addresses
+            
+        Returns:
+            List of all supported coins
+        """
+        params = {"include_platform": "true" if include_platform else "false"}
+        return self._request("GET", "/coins/list", params=params)
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Utility methods
+    # ────────────────────────────────────────────────────────────────────────────
+    
+    def is_healthy(self) -> bool:
+        """
+        Check if the CoinGecko API is accessible and responsive.
+        
+        Returns:
+            True if API is healthy, False otherwise
+        """
+        return self.ping()
+
+    def get_supported_currencies(self) -> List[str]:
+        """
+        Get list of supported vs_currencies.
+        
+        Returns:
+            List of supported currency codes
+        """
+        try:
+            response = self._request("GET", "/simple/supported_vs_currencies")
+            return response if isinstance(response, list) else []
+        except Exception:
+            # Return common currencies as fallback
+            return ["usd", "eur", "btc", "eth", "jpy", "gbp", "aud", "cad", "chf", "cny"]
+
+    def normalize_coin_id(self, symbol_or_id: str) -> Optional[str]:
+        """
+        Attempt to normalize a symbol or partial ID to a valid CoinGecko coin ID.
+        
+        Args:
+            symbol_or_id: Coin symbol (e.g., "BTC") or partial ID
+            
+        Returns:
+            Valid CoinGecko coin ID if found, None otherwise
+        """
+        # Common symbol to CoinGecko ID mappings
+        common_mappings = {
+            "btc": "bitcoin",
+            "eth": "ethereum", 
+            "usdt": "tether",
+            "bnb": "binancecoin",
+            "sol": "solana",
+            "ada": "cardano",
+            "xrp": "ripple",
+            "dot": "polkadot",
+            "doge": "dogecoin",
+            "avax": "avalanche-2",
+            "shib": "shiba-inu",
+            "link": "chainlink",
+            "matic": "matic-network",
+            "uni": "uniswap",
+            "ltc": "litecoin",
+            "atom": "cosmos",
+            "xlm": "stellar",
+            "algo": "algorand",
+            "vet": "vechain",
+            "icp": "internet-computer",
+            "fil": "filecoin",
+            "trx": "tron",
+            "etc": "ethereum-classic",
+            "ftt": "ftx-token",
+            "hbar": "hedera-hashgraph",
+            "aave": "aave",
+            "xmr": "monero",
+            "eos": "eos",
+            "bch": "bitcoin-cash",
+            "flow": "flow",
+            "mana": "decentraland",
+            "sand": "the-sandbox",
+            "cake": "pancakeswap-token",
+            "gala": "gala",
+            "axs": "axie-infinity",
+            "theta": "theta-token",
+        }
+        
+        normalized = symbol_or_id.lower().strip()
+        
+        # Check if it's a known symbol mapping
+        if normalized in common_mappings:
+            return common_mappings[normalized]
+        
+        # If it looks like it might already be a CoinGecko ID, return as-is
+        if len(normalized) > 3 and "-" in normalized:
+            return normalized
+        
+        # Try search API as last resort (but don't fail if it doesn't work)
+        try:
+            search_result = self.search(symbol_or_id)
+            coins = search_result.get("coins", [])
+            if coins:
+                # Return the first match
+                return coins[0].get("id")
+        except Exception:
+            pass
+        
+        return None
