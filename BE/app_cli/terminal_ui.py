@@ -92,16 +92,36 @@ def check_api_keys() -> Dict[str, bool]:
 
 def get_available_ai_engines() -> Dict[str, bool]:
     """Get available AI engines with their status."""
-    if not validate_api_keys:
-        return {"OpenAI": False, "Anthropic": False}
-    
     try:
-        validation = validate_api_keys()
-        return {
-            "OpenAI": validation.get("OpenAI", False),
-            "Anthropic": validation.get("Anthropic", False)
-        }
-    except Exception:
+        if validate_api_keys:
+            validation = validate_api_keys()
+            print(f"[DEBUG] Terminal UI - API validation: {validation}")  # Debug line
+            return {
+                "OpenAI": validation.get("OpenAI", False),
+                "Anthropic": validation.get("Anthropic", False)
+            }
+        else:
+            print("[DEBUG] Terminal UI - validate_api_keys not available, using fallback")  # Debug line
+            # Fallback to environment variables
+            import os
+            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            
+            openai_available = bool(openai_key) and openai_key not in [
+                "your_key_here", "YOUR_API_KEY", "openai_key", "sk-your_openai_key_here", ""
+            ]
+            anthropic_available = bool(anthropic_key) and anthropic_key not in [
+                "your_key_here", "YOUR_API_KEY", "anthropic_key", "sk-ant-your_anthropic_key_here", ""
+            ]
+            
+            print(f"[DEBUG] Terminal UI - Fallback OpenAI: {openai_available}, Anthropic: {anthropic_available}")  # Debug line
+            
+            return {
+                "OpenAI": openai_available,
+                "Anthropic": anthropic_available
+            }
+    except Exception as e:
+        print(f"[DEBUG] Terminal UI - get_available_ai_engines error: {e}")  # Debug line
         return {"OpenAI": False, "Anthropic": False}
 
 
