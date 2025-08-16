@@ -91,37 +91,45 @@ def check_api_keys() -> Dict[str, bool]:
 
 
 def get_available_ai_engines() -> Dict[str, bool]:
-    """Get available AI engines with their status."""
+    """Get available AI engines with their status using robust detection."""
     try:
-        if validate_api_keys:
-            validation = validate_api_keys()
-            print(f"[DEBUG] Terminal UI - API validation: {validation}")  # Debug line
-            return {
-                "OpenAI": validation.get("OpenAI", False),
-                "Anthropic": validation.get("Anthropic", False)
-            }
-        else:
-            print("[DEBUG] Terminal UI - validate_api_keys not available, using fallback")  # Debug line
-            # Fallback to environment variables
-            import os
-            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-            anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        import os
+        
+        # Direct environment variable access for reliability
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+        
+        print(f"[DEBUG] Terminal UI - Raw key lengths: OpenAI={len(openai_key) if openai_key else 0}, Anthropic={len(anthropic_key) if anthropic_key else 0}")
+        
+        def is_valid_key(key: str) -> bool:
+            if not key or key.strip() == "":
+                return False
             
-            openai_available = bool(openai_key) and openai_key not in [
-                "your_key_here", "YOUR_API_KEY", "openai_key", "sk-your_openai_key_here", ""
-            ]
-            anthropic_available = bool(anthropic_key) and anthropic_key not in [
-                "your_key_here", "YOUR_API_KEY", "anthropic_key", "sk-ant-your_anthropic_key_here", ""
+            # Check for common placeholder values
+            invalid_values = [
+                "your_key_here", "YOUR_API_KEY", "your_openai_key_here", 
+                "your_anthropic_key_here", "sk-your_openai_key_here", 
+                "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key"
             ]
             
-            print(f"[DEBUG] Terminal UI - Fallback OpenAI: {openai_available}, Anthropic: {anthropic_available}")  # Debug line
+            if key.strip() in invalid_values:
+                return False
             
-            return {
-                "OpenAI": openai_available,
-                "Anthropic": anthropic_available
-            }
+            # Generic check - has reasonable length and not obviously placeholder
+            return len(key.strip()) > 10
+        
+        openai_available = is_valid_key(openai_key)
+        anthropic_available = is_valid_key(anthropic_key)
+        
+        print(f"[DEBUG] Terminal UI - Key validation: OpenAI={openai_available}, Anthropic={anthropic_available}")
+        
+        return {
+            "OpenAI": openai_available,
+            "Anthropic": anthropic_available
+        }
+        
     except Exception as e:
-        print(f"[DEBUG] Terminal UI - get_available_ai_engines error: {e}")  # Debug line
+        print(f"[DEBUG] Terminal UI - get_available_ai_engines error: {e}")
         return {"OpenAI": False, "Anthropic": False}
 
 
