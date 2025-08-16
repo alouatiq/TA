@@ -1,13 +1,9 @@
 # BE/app_cli/terminal_ui.py
 """
-Terminal UI layer for the Trading Assistant CLI.
+Enhanced Terminal UI layer for the Trading Assistant CLI.
 
 This module handles all user interaction, input validation, and pretty printing.
-It integrates with trading_core.config for market metadata and session detection.
-
-If market metadata can't be loaded, we gracefully degrade and return an
-empty dict from get_market_selection_details(), allowing callers to
-default to non-market-aware behavior (e.g., UTC / US).
+It includes enhanced AI selection, sentiment configuration, and technical indicator choices.
 """
 
 from __future__ import annotations
@@ -27,6 +23,7 @@ try:
         sessions_today,              # (market_key: str) -> list[tuple[dt_start, dt_end]]
         is_market_open,              # (market_key: str) -> bool
         load_api_keys,               # () -> dict
+        validate_api_keys,           # () -> dict
     )
 except Exception:  # pragma: no cover - defensive fallback
     load_markets_config = None
@@ -36,6 +33,7 @@ except Exception:  # pragma: no cover - defensive fallback
     sessions_today = None
     is_market_open = None
     load_api_keys = None
+    validate_api_keys = None
 
 # Detect USER's local timezone (fallback to Europe/Paris)
 try:
@@ -44,9 +42,9 @@ except Exception:
     LOCAL_TZ = ZoneInfo("Europe/Paris")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 # Pretty output helpers (used by main.py)
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
 def print_header(title: str) -> None:
     print("\n" + title)
@@ -77,23 +75,34 @@ def print_table(headers: List[str], rows: List[List[object]]) -> None:
         print(fmt_row(r))
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 # API Key Management
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
 def check_api_keys() -> Dict[str, bool]:
     """Check which API keys are available."""
-    if not load_api_keys:
+    if not validate_api_keys:
         return {}
     
-    keys = load_api_keys()
-    return {
-        "TwelveData": bool(keys.get("TWELVEDATA_API_KEY")),
-        "CryptoCompare": bool(keys.get("CRYPTOCOMPARE_API_KEY")),
-        "OpenAI": bool(keys.get("OPENAI_API_KEY")),
-        "Anthropic": bool(keys.get("ANTHROPIC_API_KEY")),
-        "Alpha Vantage": bool(keys.get("ALPHA_VANTAGE_API_KEY")),
-    }
+    try:
+        return validate_api_keys()
+    except Exception:
+        return {}
+
+
+def get_available_ai_engines() -> Dict[str, bool]:
+    """Get available AI engines with their status."""
+    if not validate_api_keys:
+        return {"OpenAI": False, "Anthropic": False}
+    
+    try:
+        validation = validate_api_keys()
+        return {
+            "OpenAI": validation.get("OpenAI", False),
+            "Anthropic": validation.get("Anthropic", False)
+        }
+    except Exception:
+        return {"OpenAI": False, "Anthropic": False}
 
 
 def print_api_status() -> None:
@@ -121,9 +130,9 @@ def print_api_status() -> None:
         print("\n✅ All API keys are configured!")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 # Mode selection (classic 7-category flow vs single-asset)
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
 def prompt_main_mode() -> str:
     print("\nChoose mode:")
@@ -138,64 +147,108 @@ def prompt_main_mode() -> str:
         print("Please enter 1 or 2.")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Feature selection helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced AI Engine Selection
+# ────────────────────────────────────────────────────────────────────────────
 
-def ask_use_all_features() -> bool:
-    print_header("Feature Configuration")
-    print("🚀 By default, ALL features and indicators are enabled for maximum analysis power!")
-    print("   This includes: RSI, SMA, Sentiment Analysis, and ALL Technical Indicators")
-    print("   Technical Indicators: SMA, EMA, MACD, ADX, RSI, STOCH, OBV, BBANDS, ATR")
-    print()
+def ask_ai_engine_selection() -> List[str]:
+    """Ask user which AI engines to use for analysis."""
+    available_engines = get_available_ai_engines()
+    
+    if not any(available_engines.values()):
+        print("⚠️  No AI engines available. Please configure API keys first.")
+        return []
+    
+    print("\n🤖 AI ENGINE SELECTION:")
+    print("Choose which AI engines to use for analysis:")
+    
+    available_options = []
+    if available_engines["OpenAI"]:
+        available_options.append(("OpenAI", "OpenAI GPT-4 - Advanced reasoning and analysis"))
+    if available_engines["Anthropic"]:
+        available_options.append(("Anthropic", "Anthropic Claude - Nuanced market understanding"))
+    
+    if len(available_options) == 1:
+        engine_name, description = available_options[0]
+        print(f"   ✅ {engine_name} (Only available engine)")
+        print(f"      {description}")
+        return [engine_name]
+    
+    # Multiple engines available
+    print("   1. Use ALL available AI engines (Multi-AI analysis)")
+    for i, (engine_name, description) in enumerate(available_options, 2):
+        print(f"   {i}. {engine_name} only")
+        print(f"      {description}")
+    
     while True:
-        ans = input("✅ Use ALL features and indicators? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
+        try:
+            choice = input("Enter number: ").strip()
+            choice_num = int(choice)
+            
+            if choice_num == 1:
+                # All engines
+                return [opt[0] for opt in available_options]
+            elif 2 <= choice_num <= len(available_options) + 1:
+                # Single engine
+                selected_engine = available_options[choice_num - 2][0]
+                return [selected_engine]
+            else:
+                print(f"Please enter a number between 1 and {len(available_options) + 1}.")
+        except ValueError:
+            print("Please enter a valid number.")
 
 
-def ask_use_rsi() -> bool:
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced Sentiment Analysis Selection
+# ────────────────────────────────────────────────────────────────────────────
+
+def ask_sentiment_components() -> List[str]:
+    """Ask user which sentiment components to include."""
+    print("\n💭 SENTIMENT ANALYSIS SELECTION:")
+    print("Choose which sentiment data to include in analysis:")
+    
+    sentiment_options = [
+        ("news", "News Headlines & Market News"),
+        ("social", "Social Media Sentiment"),
+        ("fear_greed", "Fear & Greed Index"),
+        ("institutional", "Institutional Sentiment"),
+        ("technical", "Technical Sentiment Indicators"),
+    ]
+    
+    print("   1. Use ALL sentiment components (Comprehensive analysis)")
+    for i, (code, description) in enumerate(sentiment_options, 2):
+        print(f"   {i}. {description}")
+    print(f"   {len(sentiment_options) + 2}. No sentiment analysis")
+    
     while True:
-        ans = input("📊 Enable RSI (Relative Strength Index)? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
+        try:
+            choice = input("Enter number: ").strip()
+            choice_num = int(choice)
+            
+            if choice_num == 1:
+                # All components
+                return [opt[0] for opt in sentiment_options]
+            elif 2 <= choice_num <= len(sentiment_options) + 1:
+                # Single component
+                selected_component = sentiment_options[choice_num - 2][0]
+                return [selected_component]
+            elif choice_num == len(sentiment_options) + 2:
+                # No sentiment
+                return []
+            else:
+                print(f"Please enter a number between 1 and {len(sentiment_options) + 2}.")
+        except ValueError:
+            print("Please enter a valid number.")
 
 
-def ask_use_sma() -> bool:
-    while True:
-        ans = input("📈 Enable SMA (Simple Moving Averages)? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
-
-
-def ask_use_sentiment() -> bool:
-    while True:
-        ans = input("💭 Enable Sentiment Analysis? [Y/n]: ").strip().lower()
-        if ans in {"", "y", "yes"}:
-            return True
-        if ans in {"n", "no"}:
-            return False
-        print("Please enter 'y' for yes or 'n' for no.")
-
-
-def prompt_indicator_bundle() -> Dict[str, any]:
-    """Legacy function for compatibility. Returns dict with all/selected indicators."""
-    return {"all": True, "selected": []}
-
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced Technical Indicator Selection
+# ────────────────────────────────────────────────────────────────────────────
 
 def ask_individual_indicators() -> List[str]:
     """Ask user to select individual technical indicators."""
-    print("\n📊 Select Technical Indicators:")
-    print("Choose which indicators to enable (you can select multiple):")
+    print("\n📊 TECHNICAL INDICATOR SELECTION:")
+    print("Choose which technical indicators to enable:")
     
     indicators = [
         ("SMA", "Simple Moving Average - trend following"),
@@ -209,106 +262,123 @@ def ask_individual_indicators() -> List[str]:
         ("ATR", "Average True Range - volatility measure"),
     ]
     
-    selected = []
+    print("   1. Use ALL technical indicators (Maximum analysis power)")
+    for i, (code, description) in enumerate(indicators, 2):
+        print(f"   {i}. {code} - {description}")
+    print(f"   {len(indicators) + 2}. Custom selection (pick multiple)")
+    
+    while True:
+        try:
+            choice = input("Enter number: ").strip()
+            choice_num = int(choice)
+            
+            if choice_num == 1:
+                # All indicators
+                return [ind[0] for ind in indicators]
+            elif 2 <= choice_num <= len(indicators) + 1:
+                # Single indicator
+                selected_indicator = indicators[choice_num - 2][0]
+                return [selected_indicator]
+            elif choice_num == len(indicators) + 2:
+                # Custom selection
+                return ask_custom_indicator_selection(indicators)
+            else:
+                print(f"Please enter a number between 1 and {len(indicators) + 2}.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+
+def ask_custom_indicator_selection(indicators: List[Tuple[str, str]]) -> List[str]:
+    """Allow user to select multiple indicators."""
+    print("\n📊 CUSTOM INDICATOR SELECTION:")
+    print("Enter the numbers of indicators you want (e.g., 1,3,5 or 1-4):")
     
     for i, (code, description) in enumerate(indicators, 1):
-        print(f"  {i}. {code} - {description}")
-    
-    print("\nSelect indicators:")
-    print("  • Enter numbers separated by commas (e.g., 1,3,5)")
-    print("  • Enter 'all' for all indicators")
-    print("  • Enter 'none' for no technical indicators")
+        print(f"   {i}. {code} - {description}")
     
     while True:
-        choice = input("Your selection: ").strip().lower()
-        
-        if choice == "all":
-            selected = [code for code, _ in indicators]
-            break
-        elif choice == "none":
-            selected = []
-            break
-        elif choice:
-            try:
-                # Parse comma-separated numbers
-                numbers = [int(x.strip()) for x in choice.split(",")]
-                selected = []
-                for num in numbers:
-                    if 1 <= num <= len(indicators):
-                        selected.append(indicators[num-1][0])
-                    else:
-                        raise ValueError(f"Number {num} is out of range")
-                break
-            except (ValueError, IndexError) as e:
-                print(f"❌ Invalid selection: {e}")
-                print("Please enter numbers 1-9 separated by commas, 'all', or 'none'")
+        choice = input("Enter selection: ").strip()
+        try:
+            selected_indices = parse_number_selection(choice, len(indicators))
+            if selected_indices:
+                selected = [indicators[i-1][0] for i in selected_indices]
+                print(f"✅ Selected: {', '.join(selected)}")
+                return selected
+            else:
+                print("No indicators selected. Please try again.")
+        except ValueError as e:
+            print(f"Invalid selection: {e}")
+
+
+def parse_number_selection(selection: str, max_num: int) -> List[int]:
+    """Parse user selection like '1,3,5' or '1-4' into list of numbers."""
+    if not selection:
+        return []
+    
+    indices = []
+    parts = selection.split(',')
+    
+    for part in parts:
+        part = part.strip()
+        if '-' in part:
+            # Range like "1-4"
+            start, end = part.split('-', 1)
+            start_num = int(start.strip())
+            end_num = int(end.strip())
+            if 1 <= start_num <= end_num <= max_num:
+                indices.extend(range(start_num, end_num + 1))
+            else:
+                raise ValueError(f"Range {part} is out of bounds (1-{max_num})")
         else:
-            print("Please make a selection.")
+            # Single number
+            num = int(part)
+            if 1 <= num <= max_num:
+                indices.append(num)
+            else:
+                raise ValueError(f"Number {num} is out of bounds (1-{max_num})")
     
-    if selected:
-        print(f"✅ Selected indicators: {', '.join(selected)}")
+    return sorted(list(set(indices)))  # Remove duplicates and sort
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced Feature Configuration
+# ────────────────────────────────────────────────────────────────────────────
+
+def ask_use_all_features() -> bool:
+    """Ask if user wants to use all features with enhanced display."""
+    print_header("🚀 ANALYSIS CONFIGURATION")
+    print("Configure your trading analysis setup:")
+    print()
+    
+    # Show what "ALL" includes
+    available_ai = get_available_ai_engines()
+    ai_engines = [name for name, available in available_ai.items() if available]
+    
+    print("🎯 MAXIMUM POWER MODE includes:")
+    print("   📊 Technical Indicators: All 9 indicators (SMA, EMA, MACD, ADX, RSI, STOCH, OBV, BBANDS, ATR)")
+    print("   💭 Sentiment Analysis: All 5 components (News, Social, Fear/Greed, Institutional, Technical)")
+    if ai_engines:
+        print(f"   🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI if available)")
     else:
-        print("ℹ️  No technical indicators selected")
-    
-    return selected
-
-
-def ask_sentiment_components() -> List[str]:
-    """Ask user to select individual sentiment components."""
-    print("\n💭 Select Sentiment Analysis Components:")
-    
-    components = [
-        ("news", "News Headlines Analysis"),
-        ("social", "Social Media Sentiment"),
-        ("fear_greed", "Fear & Greed Index"),
-    ]
-    
-    selected = []
-    
-    for i, (code, description) in enumerate(components, 1):
-        print(f"  {i}. {description}")
-    
-    print("\nSelect sentiment components:")
-    print("  • Enter numbers separated by commas (e.g., 1,3)")
-    print("  • Enter 'all' for all components")
-    print("  • Enter 'none' for no sentiment analysis")
+        print("   🤖 AI Analysis: Not available (configure API keys)")
+    print()
     
     while True:
-        choice = input("Your selection: ").strip().lower()
-        
-        if choice == "all":
-            selected = [code for code, _ in components]
-            break
-        elif choice == "none":
-            selected = []
-            break
-        elif choice:
-            try:
-                numbers = [int(x.strip()) for x in choice.split(",")]
-                selected = []
-                for num in numbers:
-                    if 1 <= num <= len(components):
-                        selected.append(components[num-1][0])
-                    else:
-                        raise ValueError(f"Number {num} is out of range")
-                break
-            except (ValueError, IndexError) as e:
-                print(f"❌ Invalid selection: {e}")
-                print("Please enter numbers 1-3 separated by commas, 'all', or 'none'")
-        else:
-            print("Please make a selection.")
-    
-    if selected:
-        print(f"✅ Selected sentiment components: {', '.join(selected)}")
-    else:
-        print("ℹ️  No sentiment analysis selected")
-    
-    return selected
+        ans = input("✅ Use MAXIMUM POWER mode (all features)? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
 
 
 def configure_individual_features() -> Dict[str, any]:
     """Configure features individually with detailed selection."""
-    print("🔧 Configuring individual features...")
+    print("🔧 CUSTOM CONFIGURATION MODE")
+    print("Configure each component individually:")
+    
+    # Get AI engines
+    selected_ai_engines = ask_ai_engine_selection()
     
     # Get technical indicators
     selected_indicators = ask_individual_indicators()
@@ -320,110 +390,132 @@ def configure_individual_features() -> Dict[str, any]:
     use_rsi = "RSI" in selected_indicators
     use_sma = "SMA" in selected_indicators or "EMA" in selected_indicators
     use_sentiment = len(sentiment_components) > 0
+    use_ai = len(selected_ai_engines) > 0
     
-    # Show summary
-    print("\n" + "─" * 50)
-    print("📋 Configuration Summary:")
-    if selected_indicators:
-        print(f"   📊 Technical Indicators: {', '.join(selected_indicators)}")
+    # Show comprehensive summary
+    print("\n" + "─" * 60)
+    print("📋 CUSTOM CONFIGURATION SUMMARY")
+    print("─" * 60)
+    
+    if selected_ai_engines:
+        print(f"🤖 AI Engines: {', '.join(selected_ai_engines)}")
     else:
-        print("   📊 Technical Indicators: None")
+        print("🤖 AI Engines: None selected")
+    
+    if selected_indicators:
+        print(f"📊 Technical Indicators ({len(selected_indicators)}): {', '.join(selected_indicators)}")
+    else:
+        print("📊 Technical Indicators: None selected")
     
     if sentiment_components:
-        print(f"   💭 Sentiment Components: {', '.join(sentiment_components)}")
+        print(f"💭 Sentiment Components ({len(sentiment_components)}): {', '.join(sentiment_components)}")
     else:
-        print("   💭 Sentiment Components: None")
+        print("💭 Sentiment Components: None selected")
     
-    print("─" * 50)
+    print("─" * 60)
     
     return {
         "use_all": False,
         "use_rsi": use_rsi,
         "use_sma": use_sma,
         "use_sentiment": use_sentiment,
+        "use_ai": use_ai,
         "selected_indicators": selected_indicators,
         "sentiment_components": sentiment_components,
+        "ai_engines": selected_ai_engines,
     }
 
 
 def get_feature_configuration() -> Dict[str, any]:
-    """Main function to get feature configuration from user."""
+    """Main function to get complete feature configuration from user."""
     use_all = ask_use_all_features()
     
     if use_all:
         # All features enabled
+        available_ai = get_available_ai_engines()
+        ai_engines = [name for name, available in available_ai.items() if available]
+        
         selected_indicators = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
-        sentiment_components = ["news", "social", "fear_greed"]
+        sentiment_components = ["news", "social", "fear_greed", "institutional", "technical"]
         
-        print("🎯 Using ALL features and indicators for comprehensive analysis!")
+        print("🎯 MAXIMUM POWER MODE ACTIVATED!")
+        print("─" * 50)
         
-        # Show detailed feature status
-        print("─" * 44)
-        print("💭 Sentiment Analysis Components:")
-        print("   News Headlines: ✅ Enabled")
-        print("   Social Media: ✅ Enabled") 
-        print("   Fear & Greed Index: ✅ Enabled")
-        print("─" * 44)
-        print("📊 Technical Indicators Status:")
-        for indicator in selected_indicators:
-            print(f"   {indicator}: ✅ Enabled")
-        print("─" * 44)
-        print(f"Total Indicators Active: {len(selected_indicators)} of {len(selected_indicators)} technical")
-        print("Sentiment Components Active: 3 of 3 components")
-        print("─" * 44)
+        if ai_engines:
+            print(f"🤖 AI Analysis: {' + '.join(ai_engines)} ({'Multi-AI' if len(ai_engines) > 1 else 'Single-AI'})")
+        else:
+            print("🤖 AI Analysis: ❌ Not available")
+        
+        print(f"📊 Technical Indicators: ✅ All {len(selected_indicators)} enabled")
+        for ind in selected_indicators:
+            print(f"   • {ind}")
+        
+        print(f"💭 Sentiment Analysis: ✅ All {len(sentiment_components)} components")
+        for comp in sentiment_components:
+            print(f"   • {comp.replace('_', ' ').title()}")
+        
+        print("─" * 50)
         
         return {
             "use_all": True,
             "use_rsi": True,
             "use_sma": True,
             "use_sentiment": True,
+            "use_ai": len(ai_engines) > 0,
             "selected_indicators": selected_indicators,
             "sentiment_components": sentiment_components,
+            "ai_engines": ai_engines,
         }
     else:
         # Individual configuration
         return configure_individual_features()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Market selection with proper status indicators
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# Legacy compatibility functions
+# ────────────────────────────────────────────────────────────────────────────
 
-def _get_region_status_icon(region_markets: List[Tuple[str, Dict]]) -> str:
-    """Get colored circle based on market status in the region."""
-    if not region_markets or not is_market_open:
-        return "⚪"  # Gray if we can't determine status
-    
-    open_count = 0
-    total_count = len(region_markets)
-    
-    for market_key, _ in region_markets:
-        if is_market_open(market_key):
-            open_count += 1
-    
-    if open_count == 0:
-        return "🔴"  # Red - all markets closed
-    elif open_count == total_count:
-        return "🟢"  # Green - all markets open
-    else:
-        return "🟠"  # Orange - some markets open, some closed
+def ask_use_rsi() -> bool:
+    """Legacy function for RSI selection."""
+    while True:
+        ans = input("📊 Enable RSI (Relative Strength Index)? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
 
 
-def _format_market_time(market_key: str) -> str:
-    """Format current time in market's timezone."""
-    if not get_market_info:
-        return ""
-    
-    info = get_market_info(market_key)
-    tz_name = info.get("timezone", "UTC")
-    
-    try:
-        market_tz = ZoneInfo(tz_name)
-        now = datetime.now(market_tz)
-        return f"({now.strftime('%H:%M %Z')})"
-    except Exception:
-        return ""
+def ask_use_sma() -> bool:
+    """Legacy function for SMA selection."""
+    while True:
+        ans = input("📈 Enable SMA (Simple Moving Averages)? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
 
+
+def ask_use_sentiment() -> bool:
+    """Legacy function for sentiment selection."""
+    while True:
+        ans = input("💭 Enable Sentiment Analysis? [Y/n]: ").strip().lower()
+        if ans in {"", "y", "yes"}:
+            return True
+        if ans in {"n", "no"}:
+            return False
+        print("Please enter 'y' for yes or 'n' for no.")
+
+
+def prompt_indicator_bundle() -> Dict[str, any]:
+    """Legacy function for compatibility. Returns dict with all/selected indicators."""
+    return {"all": True, "selected": ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Category and budget selection
+# ────────────────────────────────────────────────────────────────────────────
 
 def get_user_choice() -> str:
     """Get category choice from user."""
@@ -467,6 +559,46 @@ def get_user_budget() -> float:
             return budget
         except ValueError:
             print("Please enter a valid number.")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Market selection helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+def _get_region_status_icon(region_markets: List[Tuple[str, Dict]]) -> str:
+    """Get colored circle based on market status in the region."""
+    if not region_markets or not is_market_open:
+        return "⚪"  # Gray if we can't determine status
+    
+    open_count = 0
+    total_count = len(region_markets)
+    
+    for market_key, _ in region_markets:
+        if is_market_open(market_key):
+            open_count += 1
+    
+    if open_count == 0:
+        return "🔴"  # Red - all markets closed
+    elif open_count == total_count:
+        return "🟢"  # Green - all markets open
+    else:
+        return "🟡"  # Orange - some markets open, some closed
+
+
+def _format_market_time(market_key: str) -> str:
+    """Format current time in market's timezone."""
+    if not get_market_info:
+        return ""
+    
+    info = get_market_info(market_key)
+    tz_name = info.get("timezone", "UTC")
+    
+    try:
+        market_tz = ZoneInfo(tz_name)
+        now = datetime.now(market_tz)
+        return f"({now.strftime('%H:%M %Z')})"
+    except Exception:
+        return ""
 
 
 def get_market_selection_details() -> Dict[str, any]:
@@ -539,50 +671,241 @@ def get_market_selection_details() -> Dict[str, any]:
         return {}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Single asset flow
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# Enhanced Individual Selection Functions
+# ────────────────────────────────────────────────────────────────────────────
 
-def prompt_single_asset_input() -> Dict[str, any]:
-    """Collect input for single asset analysis."""
-    print_header("Single Asset Analysis")
+def ask_individual_selection_by_comma(options: List[Tuple[str, str]], category_name: str) -> List[str]:
+    """
+    Ask user to select items by entering comma-separated choices.
     
-    # Get symbol
-    symbol = input("Enter symbol/ticker (e.g., AAPL, BTC-USD, EURUSD): ").strip().upper()
-    if not symbol:
-        return {"symbol": ""}
+    Args:
+        options: List of (code, description) tuples
+        category_name: Name of category for display (e.g., "Technical Indicators")
     
-    # Get asset class
-    print("\nSelect asset class:")
-    print("  1. Equity/Stock")
-    print("  2. Cryptocurrency")
-    print("  3. Forex pair")
-    print("  4. Commodity")
-    print("  5. Future")
-    print("  6. Fund/ETF")
+    Returns:
+        List of selected option codes
+    """
+    print(f"\n📋 {category_name.upper()} SELECTION:")
+    print(f"Select {category_name.lower()} you want to use:")
+    print("You can:")
+    print("  • Enter 'all' for all options")
+    print("  • Enter 'none' for no options")
+    print("  • Enter numbers separated by commas (e.g., 1,3,5)")
+    print("  • Enter ranges with dash (e.g., 1-4)")
+    print("  • Combine methods (e.g., 1,3,5-7)")
+    print()
     
-    asset_class_map = {
-        "1": "equity", "2": "crypto", "3": "forex",
-        "4": "commodity", "5": "future", "6": "fund"
-    }
+    for i, (code, description) in enumerate(options, 1):
+        print(f"  {i}. {code} - {description}")
     
     while True:
-        choice = input("Enter number [1-6]: ").strip()
-        if choice in asset_class_map:
-            asset_class = asset_class_map[choice]
-            break
-        print("Please enter a number between 1 and 6.")
+        choice = input(f"\nEnter your selection for {category_name.lower()}: ").strip().lower()
+        
+        if choice == "all":
+            selected = [opt[0] for opt in options]
+            print(f"✅ Selected ALL {category_name.lower()}: {', '.join(selected)}")
+            return selected
+        
+        elif choice == "none":
+            print(f"❌ No {category_name.lower()} selected")
+            return []
+        
+        else:
+            try:
+                selected_indices = parse_number_selection(choice, len(options))
+                if selected_indices:
+                    selected = [options[i-1][0] for i in selected_indices]
+                    print(f"✅ Selected {category_name.lower()}: {', '.join(selected)}")
+                    return selected
+                else:
+                    print(f"No {category_name.lower()} selected. Try again or enter 'none'.")
+            except ValueError as e:
+                print(f"Invalid selection: {e}")
+                print("Please try again or enter 'help' for examples.")
+
+
+def ask_individual_ai_selection() -> List[str]:
+    """Ask user to select AI engines individually."""
+    available_engines = get_available_ai_engines()
+    available_options = []
     
-    # Get budget
-    budget = get_user_budget()
+    if available_engines["OpenAI"]:
+        available_options.append(("OpenAI", "OpenAI GPT-4 - Advanced reasoning and analysis"))
+    if available_engines["Anthropic"]:
+        available_options.append(("Anthropic", "Anthropic Claude - Nuanced market understanding"))
     
-    # For now, use default indicators
-    indicators = ["RSI", "SMA", "MACD", "EMA"]
+    if not available_options:
+        print("❌ No AI engines available. Please configure API keys first.")
+        return []
+    
+    if len(available_options) == 1:
+        engine_name, description = available_options[0]
+        print(f"\n🤖 Only {engine_name} is available and will be used automatically.")
+        return [engine_name]
+    
+    return ask_individual_selection_by_comma(available_options, "AI Engines")
+
+
+def ask_individual_technical_indicators() -> List[str]:
+    """Ask user to select technical indicators individually."""
+    indicators = [
+        ("SMA", "Simple Moving Average - trend following"),
+        ("EMA", "Exponential Moving Average - responsive trend"),
+        ("MACD", "Moving Average Convergence Divergence - momentum"),
+        ("ADX", "Average Directional Index - trend strength"),
+        ("RSI", "Relative Strength Index - momentum oscillator"),
+        ("STOCH", "Stochastic Oscillator - momentum"),
+        ("OBV", "On-Balance Volume - volume analysis"),
+        ("BBANDS", "Bollinger Bands - volatility"),
+        ("ATR", "Average True Range - volatility measure"),
+    ]
+    
+    return ask_individual_selection_by_comma(indicators, "Technical Indicators")
+
+
+def ask_individual_sentiment_components() -> List[str]:
+    """Ask user to select sentiment components individually."""
+    sentiment_options = [
+        ("news", "News Headlines & Market News"),
+        ("social", "Social Media Sentiment"),
+        ("fear_greed", "Fear & Greed Index"),
+        ("institutional", "Institutional Sentiment"),
+        ("technical_sentiment", "Technical Sentiment Indicators"),
+    ]
+    
+    return ask_individual_selection_by_comma(sentiment_options, "Sentiment Components")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Updated Enhanced Feature Configuration
+# ────────────────────────────────────────────────────────────────────────────
+
+def configure_individual_features() -> Dict[str, any]:
+    """Configure features individually with detailed selection."""
+    print("🔧 CUSTOM CONFIGURATION MODE")
+    print("Configure each component individually:")
+    
+    # Get AI engines selection
+    selected_ai_engines = ask_individual_ai_selection()
+    
+    # Get technical indicators selection
+    selected_indicators = ask_individual_technical_indicators()
+    
+    # Get sentiment components selection
+    sentiment_components = ask_individual_sentiment_components()
+    
+    # Legacy compatibility flags
+    use_rsi = "RSI" in selected_indicators
+    use_sma = "SMA" in selected_indicators or "EMA" in selected_indicators
+    use_sentiment = len(sentiment_components) > 0
+    use_ai = len(selected_ai_engines) > 0
+    
+    # Show comprehensive summary
+    print("\n" + "─" * 70)
+    print("📋 CUSTOM CONFIGURATION SUMMARY")
+    print("─" * 70)
+    
+    # AI Engines Summary
+    if selected_ai_engines:
+        if len(selected_ai_engines) > 1:
+            print(f"🤖 AI Engines ({len(selected_ai_engines)}): {', '.join(selected_ai_engines)} (Multi-AI Analysis)")
+        else:
+            print(f"🤖 AI Engines: {selected_ai_engines[0]} (Single-AI Analysis)")
+    else:
+        print("🤖 AI Engines: ❌ None selected (Technical analysis only)")
+    
+    # Technical Indicators Summary
+    if selected_indicators:
+        print(f"📊 Technical Indicators ({len(selected_indicators)}/{9}): {', '.join(selected_indicators)}")
+    else:
+        print("📊 Technical Indicators: ❌ None selected")
+    
+    # Sentiment Analysis Summary
+    if sentiment_components:
+        print(f"💭 Sentiment Components ({len(sentiment_components)}/{5}): {', '.join(sentiment_components)}")
+    else:
+        print("💭 Sentiment Components: ❌ None selected")
+    
+    # Power Level Assessment
+    total_possible = 9 + 5 + len(get_available_ai_engines())  # indicators + sentiment + ai
+    total_selected = len(selected_indicators) + len(sentiment_components) + len(selected_ai_engines)
+    power_level = (total_selected / total_possible) * 100 if total_possible > 0 else 0
+    
+    print(f"⚡ Analysis Power Level: {power_level:.0f}% ({total_selected}/{total_possible} components)")
+    print("─" * 70)
     
     return {
-        "symbol": symbol,
-        "asset_class": asset_class,
-        "budget": budget,
-        "indicators": indicators,
-        "timeframes": ["1d"],  # Default timeframe
+        "use_all": False,
+        "use_rsi": use_rsi,
+        "use_sma": use_sma,
+        "use_sentiment": use_sentiment,
+        "use_ai": use_ai,
+        "selected_indicators": selected_indicators,
+        "sentiment_components": sentiment_components,
+        "ai_engines": selected_ai_engines,
+    }
+
+
+def get_feature_configuration() -> Dict[str, any]:
+    """Main function to get complete feature configuration from user."""
+    use_all = ask_use_all_features()
+    
+    if use_all:
+        # All features enabled
+        available_ai = get_available_ai_engines()
+        ai_engines = [name for name, available in available_ai.items() if available]
+        
+        selected_indicators = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
+        sentiment_components = ["news", "social", "fear_greed", "institutional", "technical_sentiment"]
+        
+        print("🎯 MAXIMUM POWER MODE ACTIVATED!")
+        print("─" * 60)
+        
+        # AI Analysis Status
+        if ai_engines:
+            if len(ai_engines) > 1:
+                print(f"🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI Analysis)")
+            else:
+                print(f"🤖 AI Analysis: {ai_engines[0]} (Single-AI Analysis)")
+        else:
+            print("🤖 AI Analysis: ❌ Not available (configure API keys)")
+        
+        # Technical Indicators Status
+        print(f"📊 Technical Indicators: ✅ All {len(selected_indicators)}/9 enabled")
+        print("   " + ", ".join(selected_indicators))
+        
+        # Sentiment Analysis Status
+        print(f"💭 Sentiment Analysis: ✅ All {len(sentiment_components)}/5 components")
+        print("   " + ", ".join([comp.replace('_', ' ').title() for comp in sentiment_components]))
+        
+        print("⚡ Analysis Power Level: 100% (Maximum)")
+        print("─" * 60)
+        
+        return {
+            "use_all": True,
+            "use_rsi": True,
+            "use_sma": True,
+            "use_sentiment": True,
+            "use_ai": len(ai_engines) > 0,
+            "selected_indicators": selected_indicators,
+            "sentiment_components": sentiment_components,
+            "ai_engines": ai_engines,
+        }
+    else:
+        # Individual configuration
+        return configure_individual_features()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Helper function for backward compatibility
+# ────────────────────────────────────────────────────────────────────────────
+
+def prompt_single_asset_input() -> Dict[str, any]:
+    """Placeholder for single asset input (future implementation)."""
+    return {
+        "symbol": "BTC-USD",
+        "asset_class": "crypto",
+        "budget": 1000.0,
+        "indicators": ["RSI", "SMA", "MACD"],
     }
