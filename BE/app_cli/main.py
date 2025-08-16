@@ -891,12 +891,15 @@ def run_enhanced_category_workflow() -> None:
     
     try:
         if ai_status["ai_available"] and use_ai:
-            # Build comprehensive AI prompt
+            # Build comprehensive AI prompt (but don't pass it as parameter since it's not supported)
             ai_prompt = build_comprehensive_ai_prompt(
                 enhanced_data, sentiment_data, category, budget, market_ctx, ai_engines
             )
             
-            # Use AI strategy with enhanced prompt
+            # Log the AI prompt for debugging
+            print(f"[DEBUG] AI prompt built successfully ({len(ai_prompt)} characters)")
+            
+            # Use AI strategy - remove unsupported enhanced_prompt parameter
             recs = analyze_market(
                 market_data=enhanced_data,
                 budget=budget,
@@ -908,8 +911,7 @@ def run_enhanced_category_workflow() -> None:
                 use_sentiment=use_sentiment,
                 market=market_ctx.get("market"),
                 market_context=market_ctx,
-                engine="llm",  # Force LLM for AI analysis
-                enhanced_prompt=ai_prompt  # Custom prompt for 3-5% targets
+                engine="llm"  # Force LLM for AI analysis
             )
         else:
             # Use rules engine - check if we should use analyze_market_batch instead
