@@ -821,8 +821,16 @@ def configure_individual_features() -> Dict[str, any]:
     print("🔧 CUSTOM CONFIGURATION MODE")
     print("Configure each component individually:")
     
-    # Get AI engines selection
-    selected_ai_engines = ask_individual_ai_selection()
+    # Get AI engines selection with status indicators
+    available_ai = get_available_ai_engines()
+    all_ai_options = [
+        ("OpenAI", "OpenAI GPT-4 - Advanced reasoning and analysis"),
+        ("Anthropic", "Anthropic Claude - Nuanced market understanding")
+    ]
+    
+    selected_ai_engines = ask_individual_selection_by_comma_with_status(
+        all_ai_options, available_ai, "AI Engines"
+    )
     
     # Get technical indicators selection
     selected_indicators = ask_individual_technical_indicators()
@@ -863,7 +871,7 @@ def configure_individual_features() -> Dict[str, any]:
         print("💭 Sentiment Components: ❌ None selected")
     
     # Power Level Assessment
-    total_possible = 9 + 5 + len(get_available_ai_engines())  # indicators + sentiment + ai
+    total_possible = 9 + 5 + len([ai for ai, avail in available_ai.items() if avail])
     total_selected = len(selected_indicators) + len(sentiment_components) + len(selected_ai_engines)
     power_level = (total_selected / total_possible) * 100 if total_possible > 0 else 0
     
