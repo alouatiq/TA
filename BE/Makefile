@@ -151,56 +151,66 @@ _interactive_api_setup:
 	@echo "=========================="
 	@printf "Enter TwelveData API key (or press Enter to skip): "; \
 	read twelvedata_key; \
-	if [ ! -z "$twelvedata_key" ]; then \
+	if [ ! -z "$$twelvedata_key" ]; then \
 		if grep -q "TWELVEDATA_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$twelvedata_key/" $(ENV_FILE); \
+			sed -i.bak "s/TWELVEDATA_API_KEY=.*/TWELVEDATA_API_KEY=$$twelvedata_key/" $(ENV_FILE); \
 		else \
-			echo "TWELVEDATA_API_KEY=$twelvedata_key" >> $(ENV_FILE); \
+			echo "TWELVEDATA_API_KEY=$$twelvedata_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ TwelveData API key saved$(NC)"; \
+	else \
+		echo "$(YELLOW)⏭️  TwelveData API key skipped$(NC)"; \
 	fi
 	@printf "Enter Alpha Vantage API key (or press Enter to skip): "; \
 	read alphavantage_key; \
-	if [ ! -z "$alphavantage_key" ]; then \
+	if [ ! -z "$$alphavantage_key" ]; then \
 		if grep -q "ALPHA_VANTAGE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$alphavantage_key/" $(ENV_FILE); \
+			sed -i.bak "s/ALPHA_VANTAGE_API_KEY=.*/ALPHA_VANTAGE_API_KEY=$$alphavantage_key/" $(ENV_FILE); \
 		else \
-			echo "ALPHA_VANTAGE_API_KEY=$alphavantage_key" >> $(ENV_FILE); \
+			echo "ALPHA_VANTAGE_API_KEY=$$alphavantage_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Alpha Vantage API key saved$(NC)"; \
+	else \
+		echo "$(YELLOW)⏭️  Alpha Vantage API key skipped$(NC)"; \
 	fi
 	@printf "Enter CryptoCompare API key (or press Enter to skip): "; \
 	read cryptocompare_key; \
-	if [ ! -z "$cryptocompare_key" ]; then \
+	if [ ! -z "$$cryptocompare_key" ]; then \
 		if grep -q "CRYPTOCOMPARE_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$cryptocompare_key/" $(ENV_FILE); \
+			sed -i.bak "s/CRYPTOCOMPARE_API_KEY=.*/CRYPTOCOMPARE_API_KEY=$$cryptocompare_key/" $(ENV_FILE); \
 		else \
-			echo "CRYPTOCOMPARE_API_KEY=$cryptocompare_key" >> $(ENV_FILE); \
+			echo "CRYPTOCOMPARE_API_KEY=$$cryptocompare_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ CryptoCompare API key saved$(NC)"; \
+	else \
+		echo "$(YELLOW)⏭️  CryptoCompare API key skipped$(NC)"; \
 	fi
 	@echo ""
 	@echo "$(PURPLE)🤖 AI APIs (Optional)$(NC)"
 	@echo "======================"
 	@printf "Enter OpenAI API key (or press Enter to skip): "; \
 	read openai_key; \
-	if [ ! -z "$openai_key" ]; then \
+	if [ ! -z "$$openai_key" ]; then \
 		if grep -q "OPENAI_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$openai_key/" $(ENV_FILE); \
+			sed -i.bak "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$$openai_key/" $(ENV_FILE); \
 		else \
-			echo "OPENAI_API_KEY=$openai_key" >> $(ENV_FILE); \
+			echo "OPENAI_API_KEY=$$openai_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ OpenAI API key saved$(NC)"; \
+	else \
+		echo "$(YELLOW)⏭️  OpenAI API key skipped$(NC)"; \
 	fi
 	@printf "Enter Anthropic API key (or press Enter to skip): "; \
 	read anthropic_key; \
-	if [ ! -z "$anthropic_key" ]; then \
+	if [ ! -z "$$anthropic_key" ]; then \
 		if grep -q "ANTHROPIC_API_KEY=" $(ENV_FILE); then \
-			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$anthropic_key/" $(ENV_FILE); \
+			sed -i.bak "s/ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=$$anthropic_key/" $(ENV_FILE); \
 		else \
-			echo "ANTHROPIC_API_KEY=$anthropic_key" >> $(ENV_FILE); \
+			echo "ANTHROPIC_API_KEY=$$anthropic_key" >> $(ENV_FILE); \
 		fi; \
 		echo "$(GREEN)✅ Anthropic API key saved$(NC)"; \
+	else \
+		echo "$(YELLOW)⏭️  Anthropic API key skipped$(NC)"; \
 	fi
 	@if [ -f "$(ENV_FILE).bak" ]; then rm $(ENV_FILE).bak; fi
 	@echo ""
@@ -213,22 +223,24 @@ check-api: venv ## Check API key configuration status
 	@echo "================================="
 	@if [ -f "$(ENV_FILE)" ]; then \
 		echo "📊 Financial Data APIs:"; \
-		for api in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY Alpha_Vantage" "CRYPTOCOMPARE_API_KEY CryptoCompare"; do \
-			set -- $api; \
-			if grep -q "^$1=" $(ENV_FILE) && [ -n "$(grep "^$1=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
-				echo "   $2: ✅ Configured"; \
+		for api_info in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY Alpha_Vantage" "CRYPTOCOMPARE_API_KEY CryptoCompare"; do \
+			api_key=$$(echo $$api_info | cut -d' ' -f1); \
+			api_name=$$(echo $$api_info | cut -d' ' -f2); \
+			if grep -q "^$$api_key=" $(ENV_FILE) && [ -n "$$(grep "^$$api_key=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
+				echo "   $$api_name: ✅ Configured"; \
 			else \
-				echo "   $2: ❌ Not configured"; \
+				echo "   $$api_name: ❌ Not configured"; \
 			fi; \
 		done; \
 		echo ""; \
 		echo "🤖 AI APIs:"; \
-		for api in "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
-			set -- $api; \
-			if grep -q "^$1=" $(ENV_FILE) && [ -n "$(grep "^$1=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
-				echo "   $2: ✅ Configured"; \
+		for api_info in "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
+			api_key=$$(echo $$api_info | cut -d' ' -f1); \
+			api_name=$$(echo $$api_info | cut -d' ' -f2); \
+			if grep -q "^$$api_key=" $(ENV_FILE) && [ -n "$$(grep "^$$api_key=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
+				echo "   $$api_name: ✅ Configured"; \
 			else \
-				echo "   $2: ❌ Not configured"; \
+				echo "   $$api_name: ❌ Not configured"; \
 			fi; \
 		done; \
 		echo ""; \
@@ -295,74 +307,149 @@ run-debug: venv ## Run with debug logging
 .PHONY: dev
 dev: venv ## Run in development mode with auto-reload
 	@echo "$(GREEN)🔄 Running in development mode...$(NC)"
-	@echo "$(YELLOW)Note: Auto-reload not implemented yet. Use Ctrl+C and 'make run' to restart.$(NC)"
-	@$(MAKE) run
+	@echo "$(YELLOW)Note: Auto-reload not implemented yet. Use run-debug for debugging.$(NC)"
+	@$(MAKE) run-debug
 
 .PHONY: test
-test: venv ## Run tests (when implemented)
-	@echo "$(BLUE)🧪 Running tests...$(NC)"
-	@echo "$(YELLOW)Tests not implemented yet.$(NC)"
+test: venv ## Run tests
+	@echo "$(GREEN)🧪 Running tests...$(NC)"
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m pytest tests/ -v
 
-.PHONY: debug-paths
-debug-paths: venv ## Debug path resolution
-	@echo "$(BLUE)🔍 Debugging path resolution...$(NC)"
-	@cd $(SRC_DIR) && $(PYTHON_VENV) -c "from trading_core.config import debug_paths; debug_paths()"
+.PHONY: test-coverage
+test-coverage: venv ## Run tests with coverage report
+	@echo "$(GREEN)📊 Running tests with coverage...$(NC)"
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m pytest tests/ --cov=. --cov-report=html --cov-report=term
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Maintenance
+# Code Quality & Maintenance
 # ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: format
+format: venv ## Format code with black and isort
+	@echo "$(BLUE)🎨 Formatting code...$(NC)"
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m black .
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m isort .
+	@echo "$(GREEN)✅ Code formatted$(NC)"
+
+.PHONY: lint
+lint: venv ## Run linting with flake8
+	@echo "$(BLUE)🔍 Running linter...$(NC)"
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m flake8 .
+
+.PHONY: type-check
+type-check: venv ## Run type checking with mypy
+	@echo "$(BLUE)🏷️  Running type checker...$(NC)"
+	@cd $(SRC_DIR) && $(PYTHON_VENV) -m mypy .
 
 .PHONY: clean
-clean: ## Clean up generated files and caches
+clean: ## Clean up temporary files and caches
 	@echo "$(BLUE)🧹 Cleaning up...$(NC)"
 	@find . -type f -name "*.pyc" -delete
-	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type f -name ".DS_Store" -delete 2>/dev/null || true
+	@find . -type d -name "__pycache__" -delete
+	@find . -type d -name "*.egg-info" -exec rm -rf {} +
+	@find . -type f -name ".coverage" -delete
+	@find . -type d -name "htmlcov" -exec rm -rf {} +
+	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	@find . -type d -name ".mypy_cache" -exec rm -rf {} +
 	@echo "$(GREEN)✅ Cleanup complete$(NC)"
 
 .PHONY: clean-all
 clean-all: clean ## Clean everything including virtual environment
-	@echo "$(BLUE)🧹 Deep cleaning (including venv)...$(NC)"
+	@echo "$(BLUE)🗑️  Removing virtual environment...$(NC)"
 	@rm -rf $(VENV_DIR)
-	@echo "$(GREEN)✅ Deep cleanup complete$(NC)"
-
-.PHONY: format
-format: venv ## Format code (when tools are configured)
-	@echo "$(BLUE)📝 Code formatting...$(NC)"
-	@echo "$(YELLOW)Code formatting tools not configured yet.$(NC)"
-
-.PHONY: lint
-lint: venv ## Lint code (when tools are configured)
-	@echo "$(BLUE)🔍 Code linting...$(NC)"
-	@echo "$(YELLOW)Code linting tools not configured yet.$(NC)"
+	@echo "$(GREEN)✅ Complete cleanup done$(NC)"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Information
+# Information & Status
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: status
-status: ## Show project status
-	@echo "$(CYAN)📊 Project Status$(NC)"
+status: ## Show project status and configuration
+	@echo "$(CYAN)📋 Project Status$(NC)"
 	@echo "=================="
-	@echo "Project: $(GREEN)$(PROJECT_NAME)$(NC)"
-	@echo "Python: $(shell $(PYTHON) --version 2>/dev/null || echo 'Not found')"
-	@echo "Virtual env: $(if $(wildcard $(VENV_DIR)),$(GREEN)Exists$(NC),$(RED)Not created$(NC))"
-	@echo "Dependencies: $(if $(wildcard $(VENV_DIR)/lib),$(GREEN)Installed$(NC),$(YELLOW)Not installed$(NC))"
-	@echo "Environment: $(if $(wildcard $(ENV_FILE)),$(GREEN)Configured$(NC),$(YELLOW)Not configured$(NC))"
+	@echo ""
+	@echo "$(BLUE)Environment:$(NC)"
+	@echo "  Python: $$($(PYTHON) --version 2>&1)"
+	@echo "  Virtual Environment: $$(if [ -d "$(VENV_DIR)" ]; then echo "✅ Present"; else echo "❌ Missing"; fi)"
+	@echo "  Requirements: $$(if [ -f "$(REQUIREMENTS)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
+	@echo "  Environment File: $$(if [ -f "$(ENV_FILE)" ]; then echo "✅ Found"; else echo "❌ Missing"; fi)"
+	@echo ""
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "$(BLUE)API Configuration:$(NC)"; \
+		configured_count=0; \
+		total_count=5; \
+		for api_info in "TWELVEDATA_API_KEY TwelveData" "ALPHA_VANTAGE_API_KEY AlphaVantage" "CRYPTOCOMPARE_API_KEY CryptoCompare" "OPENAI_API_KEY OpenAI" "ANTHROPIC_API_KEY Anthropic"; do \
+			api_key=$$(echo $$api_info | cut -d' ' -f1); \
+			api_name=$$(echo $$api_info | cut -d' ' -f2); \
+			if grep -q "^$$api_key=" $(ENV_FILE) && [ -n "$$(grep "^$$api_key=" $(ENV_FILE) | cut -d'=' -f2 | tr -d ' ')" ]; then \
+				echo "  $$api_name: ✅"; \
+				configured_count=$$((configured_count + 1)); \
+			else \
+				echo "  $$api_name: ❌"; \
+			fi; \
+		done; \
+		echo "  Total: $$configured_count/$$total_count APIs configured"; \
+	fi
+	@echo ""
+	@echo "$(BLUE)Quick Commands:$(NC)"
+	@echo "  Setup: make setup"
+	@echo "  Configure APIs: make setup-api"
+	@echo "  Run: make run"
+	@echo "  Help: make help"
 
-.PHONY: info
-info: status show-api-info ## Show all project information
+.PHONY: version
+version: ## Show version information
+	@echo "$(CYAN)Trading Assistant Backend$(NC)"
+	@echo "=========================="
+	@echo "Version: 1.0.0-beta"
+	@echo "Python: $$($(PYTHON) --version 2>&1)"
+	@echo "Make: $$(make --version | head -n1)"
+	@echo ""
+	@echo "$(BLUE)For more information, visit: https://github.com/your-repo/trading-assistant$(NC)"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Quick start aliases
+# Documentation
 # ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: install
-install: setup ## Alias for setup
+.PHONY: docs
+docs: venv ## Generate documentation
+	@echo "$(BLUE)📚 Generating documentation...$(NC)"
+	@echo "$(YELLOW)⚠️  Documentation generation not implemented yet$(NC)"
+	@echo "$(BLUE)💡 For now, see README.md and inline code documentation$(NC)"
 
-.PHONY: start
-start: run ## Alias for run
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker Support (if needed in the future)
+# ─────────────────────────────────────────────────────────────────────────────
 
-.PHONY: configure
-configure: setup-api ## Alias for setup-api
+.PHONY: docker-build
+docker-build: ## Build Docker image
+	@echo "$(BLUE)🐳 Building Docker image...$(NC)"
+	@echo "$(YELLOW)⚠️  Docker support not implemented yet$(NC)"
+
+.PHONY: docker-run
+docker-run: ## Run in Docker container
+	@echo "$(BLUE)🐳 Running in Docker...$(NC)"
+	@echo "$(YELLOW)⚠️  Docker support not implemented yet$(NC)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backup & Export
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: backup-config
+backup-config: ## Backup configuration files
+	@echo "$(BLUE)💾 Backing up configuration...$(NC)"
+	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	backup_dir="backup_$$timestamp"; \
+	mkdir -p "$$backup_dir"; \
+	if [ -f "$(ENV_FILE)" ]; then cp $(ENV_FILE) "$$backup_dir/"; fi; \
+	if [ -f "$(REQUIREMENTS)" ]; then cp $(REQUIREMENTS) "$$backup_dir/"; fi; \
+	echo "$(GREEN)✅ Configuration backed up to $$backup_dir$(NC)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Help Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: list-targets
+list-targets: ## List all available make targets
+	@echo "$(CYAN)Available Make Targets:$(NC)"
+	@$(MAKE) -pRrq -f $(MAKEFILE_LIST) : 2>/dev/null | awk -v RS= -F: '/^# File/,/^# Finished Make data base/ {if ($$1 !~ "^[#.]") {print $$1}}' | sort | egrep -v -e '^[^[:alnum:]]' -e '^$@$$'
