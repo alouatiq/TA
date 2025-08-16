@@ -921,8 +921,7 @@ def _from_coinpaprika_enhanced_with_strategy(limit: int, include_history: bool, 
             continue
 
     print(f"[DEBUG] CoinPaprika: Processed {len(rows)} assets, {successful_history_fetches} with history")
-    return rowsget("price_history", [])
-            if not price_history or len(price_history) < MIN_HISTORICAL_DAYS:
+    return rowsDAYS:
                 row["_warning"] = "insufficient_historical_data"
         
         return primary_rows
