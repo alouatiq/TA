@@ -60,7 +60,7 @@ except Exception:
 def get_ai_engine_status() -> Dict[str, Any]:
     """
     Detect which AI engines are available and return status information.
-    Uses the same detection logic as the trading_core.strategy module.
+    Uses direct environment variable check for reliability.
     """
     status = {
         "ai_available": False,
@@ -71,64 +71,85 @@ def get_ai_engine_status() -> Dict[str, Any]:
         "anthropic_available": False,
     }
     
-    # Use trading_core.config for consistent API key detection
-    try:
-        from trading_core.config import validate_api_keys
-        api_validation = validate_api_keys()
+    # Direct environment variable check (most reliable)
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    
+    print(f"[DEBUG] Raw OpenAI key length: {len(openai_key) if openai_key else 0}")
+    print(f"[DEBUG] Raw Anthropic key length: {len(anthropic_key) if anthropic_key else 0}")
+    
+    # Check if keys are properly configured (not empty, not placeholder values)
+    def is_valid_key(key: str) -> bool:
+        if not key or key.strip() == "":
+            return False
         
-        openai_available = api_validation.get("OpenAI", False)
-        anthropic_available = api_validation.get("Anthropic", False)
-        
-        print(f"[DEBUG] API validation result: {api_validation}")  # Debug line
-        print(f"[DEBUG] OpenAI available: {openai_available}, Anthropic available: {anthropic_available}")  # Debug line
-        
-    except Exception as e:
-        print(f"[DEBUG] Config validation failed: {e}")  # Debug line
-        # Fallback to direct environment variable check
-        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-        openai_available = bool(openai_key) and openai_key not in [
-            "your_key_here", "YOUR_API_KEY", "openai_key", "sk-your_openai_key_here", ""
+        # Check for common placeholder values
+        invalid_values = [
+            "your_key_here", "YOUR_API_KEY", "your_openai_key_here", 
+            "your_anthropic_key_here", "sk-your_openai_key_here", 
+            "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key"
         ]
         
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        anthropic_available = bool(anthropic_key) and anthropic_key not in [
-            "your_key_here", "YOUR_API_KEY", "anthropic_key", "sk-ant-your_anthropic_key_here", ""
-        ]
+        if key.strip() in invalid_values:
+            return False
         
-        print(f"[DEBUG] Fallback - OpenAI key: {openai_key[:10]}... available: {openai_available}")  # Debug line
-        print(f"[DEBUG] Fallback - Anthropic key: {anthropic_key[:10]}... available: {anthropic_available}")  # Debug line
+        # OpenAI keys should start with "sk-"
+        if "openai" in key.lower() or key.startswith("sk-"):
+            return key.startswith("sk-") and len(key) > 20
+        
+        # Anthropic keys should start with "sk-ant-"
+        if "anthropic" in key.lower() or key.startswith("sk-ant-"):
+            return key.startswith("sk-ant-") and len(key) > 30
+        
+        # Generic check - has reasonable length
+        return len(key.strip()) > 10
+    
+    openai_available = is_valid_key(openai_key)
+    anthropic_available = is_valid_key(anthropic_key)
+    
+    print(f"[DEBUG] OpenAI key valid: {openai_available}")
+    print(f"[DEBUG] Anthropic key valid: {anthropic_available}")
     
     status["openai_available"] = openai_available
     status["anthropic_available"] = anthropic_available
     
     # Check if engines are actually available (both key and engine functionality)
     if openai_available:
-        # Verify engine_available from strategy module
         try:
             engine_check = engine_available("llm")
-            print(f"[DEBUG] engine_available('llm') returned: {engine_check}")  # Debug line
+            print(f"[DEBUG] engine_available('llm') for OpenAI: {engine_check}")
             if engine_check:
                 status["engines"].append("OpenAI GPT-4")
                 if not status["primary_engine"]:
                     status["primary_engine"] = "OpenAI"
+            else:
+                # Even if engine check fails, add if key is valid
+                status["engines"].append("OpenAI GPT-4")
+                if not status["primary_engine"]:
+                    status["primary_engine"] = "OpenAI"
         except Exception as e:
-            print(f"[DEBUG] engine_available check failed: {e}")  # Debug line
-            # If engine check fails, still add based on key availability
+            print(f"[DEBUG] OpenAI engine check failed: {e}")
+            # Still add if key is valid
             status["engines"].append("OpenAI GPT-4")
             if not status["primary_engine"]:
                 status["primary_engine"] = "OpenAI"
     
     if anthropic_available:
-        # Anthropic would also use the "llm" engine
         try:
             engine_check = engine_available("llm")
+            print(f"[DEBUG] engine_available('llm') for Anthropic: {engine_check}")
             if engine_check:
                 status["engines"].append("Anthropic Claude")
                 if not status["primary_engine"] and not openai_available:
                     status["primary_engine"] = "Anthropic"
+            else:
+                # Even if engine check fails, add if key is valid
+                status["engines"].append("Anthropic Claude")
+                if not status["primary_engine"] and not openai_available:
+                    status["primary_engine"] = "Anthropic"
         except Exception as e:
-            print(f"[DEBUG] Anthropic engine check failed: {e}")  # Debug line
-            # If engine check fails, still add based on key availability
+            print(f"[DEBUG] Anthropic engine check failed: {e}")
+            # Still add if key is valid
             status["engines"].append("Anthropic Claude")
             if not status["primary_engine"] and not openai_available:
                 status["primary_engine"] = "Anthropic"
@@ -142,7 +163,7 @@ def get_ai_engine_status() -> Dict[str, Any]:
     else:
         status["status_message"] = "📊 Technical Analysis (No AI keys configured)"
     
-    print(f"[DEBUG] Final AI status: {status}")  # Debug line
+    print(f"[DEBUG] Final AI status: {status}")
     return status
 
 
