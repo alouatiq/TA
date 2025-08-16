@@ -669,7 +669,7 @@ def _from_coingecko_enhanced_with_strategy(limit: int, include_history: bool, hi
             sparkline=False,
             price_change_percentage="24h"
         )
-        print(f"[DEBUG] Top gainers: {[f\"{m.get('symbol', 'N/A').upper()} (+{m.get('price_change_percentage_24h_in_currency', 0):.1f}%)\" for m in markets[:5]]}")
+        print(f"[DEBUG] Top gainers: {[f'{m.get(\"symbol\", \"N/A\").upper()} (+{m.get(\"price_change_percentage_24h_in_currency\", 0):.1f}%)' for m in markets[:5]]}")
         
     elif strategy == "losers":
         print("[DEBUG] Using losers strategy (24h price change asc - oversold opportunities)")
@@ -681,7 +681,7 @@ def _from_coingecko_enhanced_with_strategy(limit: int, include_history: bool, hi
             sparkline=False,
             price_change_percentage="24h"
         )
-        print(f"[DEBUG] Top losers: {[f\"{m.get('symbol', 'N/A').upper()} ({m.get('price_change_percentage_24h_in_currency', 0):.1f}%)\" for m in markets[:5]]}")
+        print(f"[DEBUG] Top losers: {[f'{m.get(\"symbol\", \"N/A\").upper()} ({m.get(\"price_change_percentage_24h_in_currency\", 0):.1f}%)' for m in markets[:5]]}")
         
     elif strategy == "volatile":
         print("[DEBUG] Using volatile strategy (high volume + price change)")
@@ -702,7 +702,7 @@ def _from_coingecko_enhanced_with_strategy(limit: int, include_history: bool, hi
             return price_change * (volume ** 0.5)  # Scale volume impact
         
         markets = sorted(all_markets, key=volatility_score, reverse=True)[:limit]
-        print(f"[DEBUG] Most volatile: {[f\"{m.get('symbol', 'N/A').upper()} ({m.get('price_change_percentage_24h_in_currency', 0):.1f}%)\" for m in markets[:5]]}")
+        print(f"[DEBUG] Most volatile: {[f'{m.get(\"symbol\", \"N/A\").upper()} ({m.get(\"price_change_percentage_24h_in_currency\", 0):.1f}%)' for m in markets[:5]]}")
         
     elif strategy == "trending":
         print("[DEBUG] Using trending strategy (market cap change)")
@@ -714,7 +714,7 @@ def _from_coingecko_enhanced_with_strategy(limit: int, include_history: bool, hi
             sparkline=False,
             price_change_percentage="24h"
         )
-        print(f"[DEBUG] Trending: {[f\"{m.get('symbol', 'N/A').upper()}\" for m in markets[:5]]}")
+        print(f"[DEBUG] Trending: {[f'{m.get(\"symbol\", \"N/A\").upper()}' for m in markets[:5]]}")
         
     elif strategy == "mixed":
         print("[DEBUG] Using mixed strategy (balanced selection)")
@@ -749,12 +749,12 @@ def _from_coingecko_enhanced_with_strategy(limit: int, include_history: bool, hi
                 markets.append(asset)
         
         print(f"[DEBUG] Mixed selection: {len(markets)} unique assets")
-        print(f"[DEBUG] Sample mix: {[f\"{m.get('symbol', 'N/A').upper()}\" for m in markets[:8]]}")
+        print(f"[DEBUG] Sample mix: {[f'{m.get(\"symbol\", \"N/A\").upper()}' for m in markets[:8]]}")
         
     else:  # Default to volume
         print("[DEBUG] Using volume strategy (traditional high-volume assets)")
         markets = cg.get_markets(vs_currency="usd", order="volume_desc", per_page=limit, page=1, sparkline=False)
-        print(f"[DEBUG] Top by volume: {[f\"{m.get('symbol', 'N/A').upper()}\" for m in markets[:5]]}")
+        print(f"[DEBUG] Top by volume: {[f'{m.get(\"symbol\", \"N/A\").upper()}' for m in markets[:5]]}")
 
     # Process the selected assets (same logic as before)
     rows: List[Dict[str, Any]] = []
@@ -847,13 +847,13 @@ def _from_coinpaprika_enhanced_with_strategy(limit: int, include_history: bool, 
         def sort_key(x): 
             return float((((x.get("quotes") or {}).get("USD") or {}).get("percent_change_24h")) or -999)
         sorted_data = sorted(data, key=sort_key, reverse=True)
-        print(f"[DEBUG] CoinPaprika gainers: {[f\"{c.get('symbol', 'N/A')} (+{sort_key(c):.1f}%)\" for c in sorted_data[:5]]}")
+        print(f"[DEBUG] CoinPaprika gainers: {[f'{c.get(\"symbol\", \"N/A\")} (+{sort_key(c):.1f}%)' for c in sorted_data[:5]]}")
         
     elif strategy == "losers":
         def sort_key(x): 
             return float((((x.get("quotes") or {}).get("USD") or {}).get("percent_change_24h")) or 999)
         sorted_data = sorted(data, key=sort_key)  # Ascending for losers
-        print(f"[DEBUG] CoinPaprika losers: {[f\"{c.get('symbol', 'N/A')} ({sort_key(c):.1f}%)\" for c in sorted_data[:5]]}")
+        print(f"[DEBUG] CoinPaprika losers: {[f'{c.get(\"symbol\", \"N/A\")} ({sort_key(c):.1f}%)' for c in sorted_data[:5]]}")
         
     elif strategy == "volatile":
         def volatility_key(x):
@@ -862,13 +862,13 @@ def _from_coinpaprika_enhanced_with_strategy(limit: int, include_history: bool, 
             volume = float(quotes.get("volume_24h", 0))
             return price_change * (volume ** 0.3)  # Volatility score
         sorted_data = sorted(data, key=volatility_key, reverse=True)
-        print(f"[DEBUG] CoinPaprika volatile: {[f\"{c.get('symbol', 'N/A')}\" for c in sorted_data[:5]]}")
+        print(f"[DEBUG] CoinPaprika volatile: {[f'{c.get(\"symbol\", \"N/A\")}' for c in sorted_data[:5]]}")
         
     else:  # Default to volume or mixed
         def usd_vol(x: Dict[str, Any]) -> float:
             return float((((x.get("quotes") or {}).get("USD") or {}).get("volume_24h")) or 0.0)
         sorted_data = sorted(data, key=usd_vol, reverse=True)
-        print(f"[DEBUG] CoinPaprika volume: {[f\"{c.get('symbol', 'N/A')}\" for c in sorted_data[:5]]}")
+        print(f"[DEBUG] CoinPaprika volume: {[f'{c.get(\"symbol\", \"N/A\")}' for c in sorted_data[:5]]}")
 
     top = sorted_data[:limit * 2]  # Get extra in case some fail
     rows: List[Dict[str, Any]] = []
