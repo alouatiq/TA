@@ -101,7 +101,7 @@ def get_available_ai_engines() -> Dict[str, bool]:
         
         print(f"[DEBUG] Terminal UI - Raw key lengths: OpenAI={len(openai_key) if openai_key else 0}, Anthropic={len(anthropic_key) if anthropic_key else 0}")
         
-        def is_valid_key(key: str) -> bool:
+        def is_valid_key(key: str, key_type: str) -> bool:
             if not key or key.strip() == "":
                 return False
             
@@ -109,17 +109,26 @@ def get_available_ai_engines() -> Dict[str, bool]:
             invalid_values = [
                 "your_key_here", "YOUR_API_KEY", "your_openai_key_here", 
                 "your_anthropic_key_here", "sk-your_openai_key_here", 
-                "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key"
+                "sk-ant-your_anthropic_key_here", "openai_key", "anthropic_key",
+                "your_api_key", "api_key_here", "insert_key_here"
             ]
             
-            if key.strip() in invalid_values:
+            if key.strip().lower() in [v.lower() for v in invalid_values]:
                 return False
             
+            # Specific validation by key type
+            if key_type == "openai":
+                # OpenAI keys should start with "sk-" and be reasonably long
+                return key.startswith("sk-") and len(key) > 40
+            elif key_type == "anthropic":
+                # Anthropic keys should start with "sk-ant-" and be reasonably long
+                return key.startswith("sk-ant-") and len(key) > 50
+            
             # Generic check - has reasonable length and not obviously placeholder
-            return len(key.strip()) > 10
+            return len(key.strip()) > 20
         
-        openai_available = is_valid_key(openai_key)
-        anthropic_available = is_valid_key(anthropic_key)
+        openai_available = is_valid_key(openai_key, "openai")
+        anthropic_available = is_valid_key(anthropic_key, "anthropic")
         
         print(f"[DEBUG] Terminal UI - Key validation: OpenAI={openai_available}, Anthropic={anthropic_available}")
         
@@ -828,9 +837,7 @@ def configure_individual_features() -> Dict[str, any]:
         ("Anthropic", "Anthropic Claude - Nuanced market understanding")
     ]
     
-    selected_ai_engines = ask_individual_selection_by_comma_with_status(
-        all_ai_options, available_ai, "AI Engines"
-    )
+    selected_ai_engines = ask_ai_engines_with_status(all_ai_options, available_ai)
     
     # Get technical indicators selection
     selected_indicators = ask_individual_technical_indicators()
@@ -888,6 +895,86 @@ def configure_individual_features() -> Dict[str, any]:
         "sentiment_components": sentiment_components,
         "ai_engines": selected_ai_engines,
     }
+
+
+def ask_ai_engines_with_status(ai_options: List[Tuple[str, str]], available_status: Dict[str, bool]) -> List[str]:
+    """
+    Ask user to select AI engines with clear status indicators.
+    
+    Args:
+        ai_options: List of (engine_name, description) tuples
+        available_status: Dict mapping engine names to availability
+    
+    Returns:
+        List of selected engine names that are actually available
+    """
+    print("\n📋 AI ENGINES SELECTION:")
+    print("Select ai engines you want to use:")
+    print("You can:")
+    print("  • Enter 'all' for all available engines")
+    print("  • Enter 'none' for no AI analysis")
+    print("  • Enter numbers separated by commas (e.g., 1,2)")
+    print("  • Enter ranges with dash (e.g., 1-2)")
+    print("  • Combine methods (e.g., 1,2)")
+    print()
+    
+    available_engines = []
+    for i, (engine_name, description) in enumerate(ai_options, 1):
+        is_available = available_status.get(engine_name, False)
+        if is_available:
+            print(f"  {i}. ✅ {engine_name} - {description}")
+            available_engines.append((engine_name, description))
+        else:
+            print(f"  {i}. ❌ {engine_name} - {description} (API key not configured)")
+    
+    if not available_engines:
+        print("\n❌ No AI engines available. Please configure API keys first.")
+        print("💡 Run 'make setup-api' to configure your API keys.")
+        return []
+    
+    while True:
+        choice = input(f"\nEnter your selection for ai engines: ").strip().lower()
+        
+        if choice == "all":
+            selected = [engine[0] for engine in available_engines]
+            if len(selected) > 1:
+                print(f"✅ Selected ALL available ai engines: {', '.join(selected)}")
+            else:
+                print(f"✅ Selected ai engines: {selected[0]}")
+            return selected
+        
+        elif choice == "none":
+            print("❌ No ai engines selected")
+            return []
+        
+        else:
+            try:
+                selected_indices = parse_number_selection(choice, len(ai_options))
+                selected = []
+                
+                for idx in selected_indices:
+                    if 1 <= idx <= len(ai_options):
+                        engine_name = ai_options[idx-1][0]
+                        if available_status.get(engine_name, False):
+                            if engine_name not in selected:
+                                selected.append(engine_name)
+                        else:
+                            print(f"⚠️  {engine_name} is not available (API key not configured)")
+                    else:
+                        print(f"⚠️  Invalid number: {idx}")
+                
+                if selected:
+                    if len(selected) > 1:
+                        print(f"✅ Selected ai engines: {', '.join(selected)}")
+                    else:
+                        print(f"✅ Selected ai engines: {selected[0]}")
+                    return selected
+                else:
+                    print("❌ No valid ai engines selected. Try again or enter 'none'.")
+                    
+            except ValueError as e:
+                print(f"Invalid selection: {e}")
+                print("Please try again or enter 'help' for examples.")
 
 
 def get_feature_configuration() -> Dict[str, any]:
