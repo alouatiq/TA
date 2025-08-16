@@ -60,6 +60,7 @@ except Exception:
 def get_ai_engine_status() -> Dict[str, Any]:
     """
     Detect which AI engines are available and return status information.
+    Uses the same detection logic as the trading_core.strategy module.
     """
     status = {
         "ai_available": False,
@@ -70,30 +71,43 @@ def get_ai_engine_status() -> Dict[str, Any]:
         "anthropic_available": False,
     }
     
-    # Check OpenAI
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_available = bool(openai_key) and openai_key not in [
-        "your_key_here", "YOUR_API_KEY", "openai_key", "sk-your_openai_key_here", ""
-    ]
-    
-    # Check Anthropic
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    anthropic_available = bool(anthropic_key) and anthropic_key not in [
-        "your_key_here", "YOUR_API_KEY", "anthropic_key", "sk-ant-your_anthropic_key_here", ""
-    ]
+    # Use trading_core.config for consistent API key detection
+    try:
+        from trading_core.config import validate_api_keys
+        api_validation = validate_api_keys()
+        
+        openai_available = api_validation.get("OpenAI", False)
+        anthropic_available = api_validation.get("Anthropic", False)
+        
+    except Exception:
+        # Fallback to direct environment variable check
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        openai_available = bool(openai_key) and openai_key not in [
+            "your_key_here", "YOUR_API_KEY", "openai_key", "sk-your_openai_key_here", ""
+        ]
+        
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        anthropic_available = bool(anthropic_key) and anthropic_key not in [
+            "your_key_here", "YOUR_API_KEY", "anthropic_key", "sk-ant-your_anthropic_key_here", ""
+        ]
     
     status["openai_available"] = openai_available
     status["anthropic_available"] = anthropic_available
     
+    # Check if engines are actually available (both key and engine functionality)
     if openai_available:
-        status["engines"].append("OpenAI GPT-4")
-        if not status["primary_engine"]:
-            status["primary_engine"] = "OpenAI"
+        # Verify engine_available from strategy module
+        if engine_available("llm"):
+            status["engines"].append("OpenAI GPT-4")
+            if not status["primary_engine"]:
+                status["primary_engine"] = "OpenAI"
     
     if anthropic_available:
-        status["engines"].append("Anthropic Claude")
-        if not status["primary_engine"]:
-            status["primary_engine"] = "Anthropic"
+        # Anthropic would also use the "llm" engine
+        if engine_available("llm"):
+            status["engines"].append("Anthropic Claude")
+            if not status["primary_engine"] and not openai_available:
+                status["primary_engine"] = "Anthropic"
     
     if status["engines"]:
         status["ai_available"] = True
