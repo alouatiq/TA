@@ -19,6 +19,16 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 import os
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # This loads the .env file
+    print("[DEBUG] .env file loaded successfully")
+except ImportError:
+    print("[DEBUG] python-dotenv not available, using system environment variables only")
+except Exception as e:
+    print(f"[DEBUG] Error loading .env file: {e}")
+
 import zoneinfo
 import tzlocal
 from tqdm import tqdm
