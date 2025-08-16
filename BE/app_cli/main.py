@@ -865,7 +865,21 @@ def run_enhanced_category_workflow() -> None:
     
     try:
         # Fetch with 14 days of history for technical analysis
-        rows = fetch_func(include_history=True, limit=25, history_days=14)
+        # Use dynamic strategy selection for crypto
+        if category == "crypto":
+            # Import the strategy functions
+            from trading_core.data_fetcher.crypto import get_crypto_selection_strategy, get_available_crypto_strategies
+            
+            strategy = get_crypto_selection_strategy()
+            print(f"📊 Using {strategy} strategy for crypto selection")
+            
+            available_strategies = get_available_crypto_strategies()
+            print(f"💡 Strategy: {available_strategies.get(strategy, 'Unknown strategy')}")
+            
+            rows = fetch_func(include_history=True, limit=25, history_days=14, selection_strategy=strategy)
+        else:
+            rows = fetch_func(include_history=True, limit=25, history_days=14)
+            
         print(f"✅ Fetched data for {len(rows)} assets with 14-day history")
         pbar.update(1)
     except Exception as e:
