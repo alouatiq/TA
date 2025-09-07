@@ -1460,6 +1460,9 @@ def print_enhanced_recommendations(
     actual_portfolio_return = (actual_profit / total_allocated) * 100 if total_allocated > 0 else 0
     budget_utilization = (total_allocated / budget) * 100
     
+    # Ensure cash_position is calculated (fix for the error)
+    cash_position = budget - total_allocated if 'total_allocated' in locals() else budget
+    
     print("📈 TRADING STRATEGY SUMMARY")
     print("─" * 65)
     
