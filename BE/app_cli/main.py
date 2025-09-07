@@ -1234,13 +1234,16 @@ def print_enhanced_recommendations(
     title: str, 
     category: str, 
     budget: float,
-    ai_status: Dict[str, Any]
+    ai_status: Dict[str, Any],
+    min_profit_target: float = 2.0,
+    target_desc: str = "Moderate (2-4%)"
 ) -> None:
     """
-    Enhanced recommendation display with profit targets and AI insights.
+    Enhanced recommendation display with profit targets, confidence levels, and AI insights.
     
     This function provides a comprehensive display of trading recommendations
-    including risk management, position sizing, and market timing information.
+    including risk management, position sizing, market timing information,
+    and prominent confidence level display.
     """
     
     print_header(title)
@@ -1254,18 +1257,21 @@ def print_enhanced_recommendations(
     else:
         print("📊 Analysis performed by: Technical Rules Engine")
     
+    print(f"🎯 Profit Target: {target_desc}")
+    print(f"📊 Minimum Expected Return: {min_profit_target}%")
+    
     if not recs:
-        print("❌ No trading opportunities found matching our criteria.")
-        print("💡 Try adjusting parameters or check different market categories.")
+        print(f"\n❌ No trading opportunities found matching our criteria.")
+        print(f"💡 Try lowering the profit target to {max(0.5, min_profit_target - 1)}% or check different market categories.")
         return
     
     # Filter and sort by profitability and confidence
     profitable_recs = [r for r in recs if r.get("action") in ["Buy", "Sell"]]
     
     if not profitable_recs:
-        print("📊 No high-confidence opportunities meeting 3-5% minimum profit target.")
-        print("💡 Market conditions may not be optimal for intraday trading today.")
-        print("🔄 Consider checking other categories or waiting for better setups.")
+        print(f"\n📊 No high-confidence opportunities meeting {min_profit_target}% minimum profit target.")
+        print(f"💡 Market conditions may not be optimal for intraday trading today.")
+        print(f"🔄 Consider lowering target to {max(0.5, min_profit_target - 1)}% or checking other categories.")
         return
     
     # Sort by confidence and expected profit
@@ -1277,7 +1283,7 @@ def print_enhanced_recommendations(
     
     total_potential_profit = 0
     
-    # Display top 3 opportunities with detailed analysis
+    # Display top 3 opportunities with detailed analysis and prominent confidence levels
     for i, rec in enumerate(profitable_recs[:3], 1):
         asset = rec.get("asset", rec.get("symbol", "Unknown"))
         action = rec.get("action", "Hold")
@@ -1296,7 +1302,31 @@ def print_enhanced_recommendations(
         print(f"\n🏆 OPPORTUNITY #{i} - {asset}")
         print("─" * 50)
         print(f"📈 Action: {action.upper()}")
-        print(f"🎲 AI Confidence: {confidence}%")
+        
+        # Prominent confidence level display with color coding
+        confidence_emoji = ""
+        if confidence >= 85:
+            confidence_emoji = "🟢"  # High confidence
+        elif confidence >= 70:
+            confidence_emoji = "🟡"  # Medium confidence
+        elif confidence >= 50:
+            confidence_emoji = "🟠"  # Low-medium confidence
+        else:
+            confidence_emoji = "🔴"  # Low confidence
+            
+        print(f"🎲 {confidence_emoji} AI CONFIDENCE: {confidence}%")
+        
+        # Add confidence interpretation
+        if confidence >= 85:
+            conf_text = "Very High - Strong recommendation"
+        elif confidence >= 70:
+            conf_text = "High - Good opportunity"
+        elif confidence >= 50:
+            conf_text = "Medium - Consider carefully"
+        else:
+            conf_text = "Low - High risk"
+        print(f"   └─ Level: {conf_text}")
+        
         print(f"💵 Entry Price: ${entry_price:.4f}")
         print(f"🎯 Target Price: ${target_price:.4f}")
         print(f"🛑 Stop Loss: ${stop_loss:.4f}")
@@ -1335,6 +1365,7 @@ def print_enhanced_recommendations(
     print(f"🎯 Total Opportunities: {len(profitable_recs)}")
     print(f"💰 Total Potential Profit: ${total_potential_profit:.2f}")
     print(f"📈 Average Expected Return: {(total_potential_profit/budget)*100:.1f}%")
+    print(f"🎯 Profit Target: {target_desc} (min {min_profit_target}%)")
     
     # Market timing reminder based on category
     if category == "crypto":
@@ -1343,9 +1374,10 @@ def print_enhanced_recommendations(
     else:
         print("⏰ Exit Deadline: Before market close today")
     
-    # Trading strategy tips specific to our 3-5% profit approach
+    # Trading strategy tips specific to user's profit target
     print(f"\n💡 AI TRADING STRATEGY TIPS:")
-    print("   • All recommendations target minimum 3-5% profit")
+    print(f"   • All recommendations target minimum {min_profit_target}% profit")
+    print("   • Higher confidence = lower risk, better probability")
     print("   • Execute trades during optimal timing windows")
     print("   • Set stop losses immediately after entry")
     print("   • Monitor positions every 30 minutes")
@@ -1356,6 +1388,8 @@ def print_enhanced_recommendations(
     print(f"\n⚠️  RISK MANAGEMENT:")
     print("   • Never risk more than 2% of total portfolio per trade")
     print("   • Use stop losses to limit downside exposure")
+    print("   • Higher profit targets = higher risk")
+    print("   • Confidence levels help assess probability")
     print("   • Market conditions can change rapidly")
     print("   • Past performance doesn't guarantee future results")
 
