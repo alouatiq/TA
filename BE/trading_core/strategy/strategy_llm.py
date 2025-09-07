@@ -4,7 +4,7 @@ Strategy engine (LLM-capable, with robust offline fallback).
 
 This module provides a single entrypoint:
     analyze_market(market_data, budget, market_type, history, sentiment,
-                   use_rsi, use_sma, use_sentiment, market, market_context)
+                   use_rsi, use_sma, use_sentiment, market, market_context, min_profit_target)
 
 Behavior
 --------
@@ -16,12 +16,12 @@ Behavior
 2) Otherwise (default):
       - Uses an internal deterministic fusion of indicators across multiple
         timeframes to generate a score in [-1, +1] per asset.
-      - Converts the score to an action:
-            score > +0.25 → BUY
-            score < -0.25 → SELL (only if you hold; CLI may filter)
-            else           → HOLD
+      - Converts the score to an action based on user's profit target:
+            score > dynamic_threshold → BUY
+            score < -dynamic_threshold → SELL (only if you hold; CLI may filter)
+            else                     → HOLD
       - Sizes positions via a simple risk rule (2% risk per trade by default).
-      - Targets = price + 2 * ATR_proxy, Stop = price - 1 * ATR_proxy.
+      - Targets = price + profit_target_multiplier * ATR_proxy, Stop = price - 1 * ATR_proxy.
         ATR_proxy is derived from returns volatility if full OHLC not available.
 
 Inputs
@@ -42,6 +42,9 @@ market_context: dict
         - region: str | None
         - timezone: "Area/City" string
         - sessions: List[[HH:MM, HH:MM], ...] in market local time
+
+min_profit_target: float
+    User's minimum profit target percentage (e.g., 2.0 for 2%)
 
 Output
 ------
@@ -146,7 +149,7 @@ def _atr_proxy(prices: List[float]) -> float:
     This is a *very* rough stand-in for intraday range.
     """
     if not prices or len(prices) < 5:
-        return 0.01  # 1% fallback of (relative) price scale; we’ll convert later
+        return 0.01  # 1% fallback of (relative) price scale; we'll convert later
     ann_vol = _std_annualized(prices)  # annualized vol in ~log-return terms
     # Convert to ~daily move scale
     daily_vol = ann_vol / math.sqrt(252)
@@ -342,10 +345,43 @@ def _fuse_score(sig: Dict[str, Optional[float]], regime: str, sentiment_score: O
     return max(-1.0, min(1.0, score))
 
 
-def _choose_action(score: float) -> str:
-    if score > 0.25:
+def _choose_action(score: float, min_profit_target: float = 2.0) -> str:
+    """
+    Choose trading action based on score and user's profit target.
+    
+    Higher profit targets require higher confidence (higher thresholds).
+    Lower profit targets allow for more trading opportunities (lower thresholds).
+    
+    Args:
+        score: Technical analysis score in [-1, +1]
+        min_profit_target: User's minimum profit target percentage
+        
+    Returns:
+        "Buy", "Sell", or "Hold"
+    """
+    # Dynamic thresholds based on profit target
+    # Conservative targets (1-2%) = lower thresholds (more opportunities)
+    # Aggressive targets (5%+) = higher thresholds (fewer, higher-confidence opportunities)
+    
+    if min_profit_target <= 1.5:  # Very conservative
+        buy_threshold = 0.15
+        sell_threshold = -0.15
+    elif min_profit_target <= 2.5:  # Conservative to moderate
+        buy_threshold = 0.20
+        sell_threshold = -0.20
+    elif min_profit_target <= 4.0:  # Moderate to aggressive
+        buy_threshold = 0.30
+        sell_threshold = -0.30
+    elif min_profit_target <= 6.0:  # Aggressive
+        buy_threshold = 0.40
+        sell_threshold = -0.40
+    else:  # Very aggressive (6%+)
+        buy_threshold = 0.50
+        sell_threshold = -0.50
+    
+    if score > buy_threshold:
         return "Buy"
-    if score < -0.25:
+    if score < sell_threshold:
         return "Sell"
     return "Hold"
 
@@ -354,20 +390,40 @@ def _position_size(
     price: float,
     budget: float,
     atr_proxy: float,
+    min_profit_target: float = 2.0,
     risk_per_trade: float = 0.02,
     min_qty: int = 1,
 ) -> Tuple[int, float, float]:
     """
-    Returns (qty, stop_price, target_price).
-    ATR proxy is *relative* (e.g., 0.02 ~ 2% daily move). If ATR is missing, use 2%.
-    stop distance = 1 * ATR; target distance = 2 * ATR by default.
+    Returns (qty, stop_price, target_price) based on user's profit target.
+    
+    The target distance is calculated to achieve the user's minimum profit target,
+    while stop distance uses ATR for risk management.
+    
+    Args:
+        price: Current asset price
+        budget: Available budget for this trade
+        atr_proxy: Volatility proxy (relative, e.g., 0.02 = 2% daily move)
+        min_profit_target: User's minimum profit target percentage
+        risk_per_trade: Maximum risk per trade (default 2% of budget)
+        min_qty: Minimum quantity to trade
+        
+    Returns:
+        Tuple of (quantity, stop_price, target_price)
     """
     if price <= 0:
         return 0, 0.0, 0.0
 
+    # Use ATR for stop distance (risk management)
     rel_atr = atr_proxy if (atr_proxy and atr_proxy > 0) else 0.02
-    stop_dist = price * rel_atr * 1.0
-    tgt_dist  = price * rel_atr * 2.0
+    stop_dist = price * rel_atr * 1.0  # 1x ATR for stop
+    
+    # Calculate target distance to achieve user's profit target
+    target_dist_from_profit = price * (min_profit_target / 100.0)
+    
+    # Use the larger of: user's profit target OR 2x ATR (for reasonable risk/reward)
+    target_dist_from_atr = price * rel_atr * 2.0
+    target_dist = max(target_dist_from_profit, target_dist_from_atr)
 
     # Risk per trade budget
     risk_cap = max(0.0, float(budget) * float(risk_per_trade))
@@ -376,12 +432,12 @@ def _position_size(
     else:
         qty = int(max(min_qty, math.floor(risk_cap / stop_dist)))
 
-    # Don’t overshoot capital
+    # Don't overshoot capital
     if qty * price > budget:
         qty = int(budget // price)
 
     stop_price   = max(0.01, price - stop_dist)
-    target_price = price + tgt_dist
+    target_price = price + target_dist
     return qty, stop_price, target_price
 
 
@@ -419,28 +475,38 @@ def _llm_enabled() -> bool:
     return bool(use and key)
 
 
-def _llm_analyze(payload: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+def _llm_analyze(payload: Dict[str, Any], min_profit_target: float = 2.0) -> Optional[List[Dict[str, Any]]]:
     """
-    Minimal LLM call that asks for JSON recommendations.
+    Minimal LLM call that asks for JSON recommendations with user's profit target.
     If any error occurs, returns None so caller can fall back.
+    
+    Args:
+        payload: Market data and analysis context
+        min_profit_target: User's minimum profit target percentage
+        
+    Returns:
+        List of recommendations or None if LLM fails
     """
     if not _llm_enabled():
         return None
 
     try:
-        # OpenAI SDK v1+ style; adapt if you’re on a different version.
+        # OpenAI SDK v1+ style; adapt if you're on a different version.
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         system_prompt = (
-            "You are a trading assistant. Return STRICT JSON with a list of recommendations.\n"
-            "Each item: {asset, symbol, action, confidence, quantity, price, sell_target, sell_time, "
-            "sell_time_tz, estimated_profit, key_reasons}."
+            f"You are a trading assistant. Return STRICT JSON with a list of recommendations.\n"
+            f"User's minimum profit target: {min_profit_target}%\n"
+            f"Only recommend trades with high probability of achieving {min_profit_target}% or better.\n"
+            f"Each item: {{asset, symbol, action, confidence, quantity, price, sell_target, sell_time, "
+            f"sell_time_tz, estimated_profit, key_reasons}}."
         )
         user_prompt = (
-            "Analyze this market snapshot and produce actionable recommendations. "
-            "Weigh technical/fundamental/sentiment/microstructure signals conservatively. "
-            "Avoid overfitting; consider multiple timeframes."
+            f"Analyze this market snapshot and produce actionable recommendations for {min_profit_target}% minimum profit. "
+            f"Weigh technical/fundamental/sentiment/microstructure signals conservatively. "
+            f"Only suggest trades with strong conviction for achieving the {min_profit_target}% target. "
+            f"Consider multiple timeframes and risk management."
         )
 
         # We keep the payload compact to avoid token bloat.
@@ -496,11 +562,28 @@ def analyze_market(
     use_sentiment: bool = False,
     market: Optional[str] = None,
     market_context: Optional[Dict[str, Any]] = None,
+    min_profit_target: float = 2.0,
+    **kwargs: Any,
 ) -> List[Dict[str, Any]]:
     """
-    Main entry point used by the CLI.
+    Main entry point used by the CLI with user-configurable profit targets.
 
-    Returns a list of recommendation dicts (possibly empty).
+    Args:
+        market_data: List of assets with price and technical data
+        budget: Available trading budget
+        market_type: Asset category (crypto, forex, equities, etc.)
+        history: Previous trading session data (optional)
+        sentiment: Market sentiment headlines (optional)
+        use_rsi: Whether to include RSI in analysis
+        use_sma: Whether to include SMA in analysis
+        use_sentiment: Whether to include sentiment in analysis
+        market: Specific market/exchange (optional)
+        market_context: Market timing and regional information
+        min_profit_target: User's minimum profit target percentage (e.g., 2.0 for 2%)
+        **kwargs: Additional parameters
+        
+    Returns:
+        List of recommendation dicts (possibly empty) that meet the user's profit target
     """
 
     market_context = market_context or {}
@@ -538,12 +621,13 @@ def analyze_market(
             "score": score,
         })
 
-    # Optional LLM pass (guarded). We pass a compact snapshot.
+    # Optional LLM pass (guarded). We pass a compact snapshot with profit target.
     if _llm_enabled() and enriched:
         payload = {
             "market_type": market_type,
             "market": market,
             "budget": budget,
+            "min_profit_target": min_profit_target,  # Include user's profit target
             "sell_close": close_hhmm,
             "sell_tz": sell_tz,
             "global_sentiment": global_sent_score,
@@ -559,7 +643,7 @@ def analyze_market(
                 for e in enriched[:40]  # cap to keep prompt small
             ],
         }
-        llm_recs = _llm_analyze(payload)
+        llm_recs = _llm_analyze(payload, min_profit_target)
         if isinstance(llm_recs, list):
             # Validate shape + coerce to our return schema; if invalid, we ignore & fall back
             cleaned = []
@@ -572,6 +656,13 @@ def analyze_market(
                     conf = float(r.get("confidence", 0.0))
                     action = str(r.get("action") or "Hold")
                     estp = float(r.get("estimated_profit", 0.0))
+                    
+                    # Validate that the recommendation meets the user's profit target
+                    if action == "Buy" and price > 0:
+                        profit_pct = ((tgt - price) / price) * 100
+                        if profit_pct < min_profit_target * 0.8:  # Allow 20% tolerance
+                            continue  # Skip recommendations that don't meet profit target
+                    
                     cleaned.append({
                         "asset": asset,
                         "symbol": asset,
@@ -590,11 +681,11 @@ def analyze_market(
             if cleaned:
                 return cleaned
 
-    # Offline deterministic plan:
-    # 1) Rank by score desc for BUY candidates
+    # Offline deterministic plan with user's profit target:
+    # 1) Rank by score desc for BUY candidates using dynamic thresholds
     # 2) Propose 1-3 positions (or 1 if budget is small)
-    # 3) Risk-aware sizing using ATR proxy
-    buys = [e for e in enriched if _choose_action(e["score"]) == "Buy"]
+    # 3) Risk-aware sizing using ATR proxy and profit target
+    buys = [e for e in enriched if _choose_action(e["score"], min_profit_target) == "Buy"]
     buys.sort(key=lambda x: x["score"], reverse=True)
 
     if not buys:
@@ -614,8 +705,8 @@ def analyze_market(
                 "estimated_profit": 0.0,
                 "action": "Hold",
                 "confidence": _pct(abs(top["score"])),
-                "key_reasons": f"Regime: {top['regime'] or 'range'}, score={round(top['score'],3)}; "
-                               f"trend/momentum mixed; waiting for confirmation.",
+                "key_reasons": (f"Regime: {top['regime'] or 'range'}, score={round(top['score'],3)}; "
+                               f"trend/momentum mixed; waiting for confirmation that meets {min_profit_target}% target."),
             }]
 
         return []
@@ -634,11 +725,19 @@ def analyze_market(
             price=price,
             budget=per_trade_budget,
             atr_proxy=atr_rel,
+            min_profit_target=min_profit_target,  # Use user's profit target
             risk_per_trade=0.02,  # 2% risk model
             min_qty=1,
         )
         if qty <= 0:
             continue
+
+        # Verify that the target meets the user's minimum profit requirement
+        if target_price > price:
+            profit_pct = ((target_price - price) / price) * 100
+            if profit_pct < min_profit_target * 0.9:  # Allow 10% tolerance
+                # Adjust target to meet minimum profit requirement
+                target_price = price * (1 + min_profit_target / 100.0)
 
         est_profit = max(0.0, (target_price - price) * qty)
         recs.append({
@@ -657,7 +756,8 @@ def analyze_market(
                 f"EMA>SMA: {bool((e['indicators'].get('ema_20') or 0) > (e['indicators'].get('sma_20') or 0))}; "
                 f"MACD>Signal: {bool((e['indicators'].get('macd') or -1e9) > (e['indicators'].get('macd_signal') or 1e9))}; "
                 f"RSI: {round(e['indicators'].get('rsi_14') or 50.0, 1)}; "
-                f"Volatility: {round((e['indicators'].get('volatility') or 0.0)*100,1)}%"
+                f"Volatility: {round((e['indicators'].get('volatility') or 0.0)*100,1)}%; "
+                f"Target: {min_profit_target}% min profit"
             ),
         })
 
