@@ -1,4 +1,3 @@
-# BE/app_cli/main.py
 """
 Enhanced Trading Assistant with Multi-AI Support and Universal Sentiment Analysis
 
@@ -7,7 +6,7 @@ Complete Workflow:
 2. Apply user-selected technical indicators (RSI, SMA, MACD, etc.)
 3. Collect sentiment data for ALL 7 categories
 4. Send all data to available AI (OpenAI/Anthropic) for analysis
-5. Get recommendations with 3-5% minimum profit targets
+5. Get recommendations with user-configurable profit targets
 6. Respect market timing and show which AI was used
 
 Supports all categories: Crypto, Forex, Equities, Commodities, Futures, Warrants, Funds
@@ -16,9 +15,10 @@ Key Features:
 - Multi-AI analysis support (OpenAI + Anthropic)
 - Universal sentiment analysis across all categories
 - Complete technical indicator suite (9 indicators)
+- User-configurable profit targets (1% to 20%+)
 - Risk management with stop-loss calculations
 - Market timing awareness (24/7 vs market hours)
-- 3-5% minimum profit targeting strategy
+- Confidence level display with visual indicators
 """
 
 from __future__ import annotations
@@ -591,21 +591,18 @@ def enhance_data_with_indicators(rows: List[Dict[str, Any]], selected_indicators
         return rows
 
 
-def calculate_profit_potential(technical_data: Dict[str, Any], current_price: float, category: str) -> Dict[str, float]:
+def calculate_profit_potential(technical_data: Dict[str, Any], current_price: float, category: str, min_profit_target: float) -> Dict[str, float]:
     """
-    Calculate realistic profit potential based on technical indicators and market characteristics.
+    Calculate realistic profit potential based on technical indicators, market characteristics, and user's profit target.
     
     This function combines technical analysis with market-specific volatility patterns
-    to estimate realistic profit targets and risk levels. It considers:
-    - Historical volatility patterns by asset class
-    - Current technical momentum (RSI, MACD)
-    - Trend strength (moving averages)
-    - Market-specific characteristics
+    to estimate realistic profit targets and risk levels based on the user's selected minimum profit target.
     
     Args:
         technical_data: Dictionary of calculated technical indicators
         current_price: Current asset price
         category: Asset category (crypto, forex, equities, etc.)
+        min_profit_target: User's minimum profit target percentage
         
     Returns:
         Dictionary with profit targets, risk levels, and scoring factors
@@ -668,16 +665,16 @@ def calculate_profit_potential(technical_data: Dict[str, Any], current_price: fl
     # Calculate base profit target combining all factors
     base_target = actual_volatility * momentum_factor * trend_factor * macd_factor
     
-    # Ensure minimum 3% target for our strategy requirements
-    min_target = 0.03  # 3% minimum profit requirement
+    # Ensure we meet the user's minimum profit target
+    user_min_target = min_profit_target / 100.0  # Convert percentage to decimal
     max_target = min(actual_volatility * 4, 0.20)  # Max 20% or 4x volatility
     
-    # Calculate conservative and aggressive targets
-    conservative_target = max(min_target, base_target * 0.8)
-    aggressive_target = min(max_target, base_target * 1.8)
+    # Calculate conservative and aggressive targets based on user's minimum
+    conservative_target = max(user_min_target, base_target * 0.8)
+    aggressive_target = min(max_target, max(user_min_target * 1.5, base_target * 1.8))
     
     return {
-        "min_target_pct": min_target * 100,
+        "min_target_pct": user_min_target * 100,
         "conservative_target_pct": conservative_target * 100,
         "aggressive_target_pct": aggressive_target * 100,
         "stop_loss_pct": actual_volatility * 0.6 * 100,  # 60% of volatility for stop loss
@@ -698,18 +695,16 @@ def build_comprehensive_ai_prompt(
     category: str,
     budget: float,
     market_context: Dict[str, Any],
-    ai_engines: List[str]
+    ai_engines: List[str],
+    min_profit_target: float,
+    target_desc: str
 ) -> str:
     """
-    Build a comprehensive prompt for AI analysis with 3-5% minimum profit targets.
+    Build a comprehensive prompt for AI analysis with user-configurable profit targets.
     
     This function creates a detailed, structured prompt that provides the AI with
-    all necessary context for making informed trading recommendations:
-    - Market timing and category-specific constraints
-    - Detailed technical analysis data for each asset
-    - Sentiment context and market conditions
-    - Risk management parameters
-    - Expected response format
+    all necessary context for making informed trading recommendations based on
+    the user's specific profit target requirements.
     
     Args:
         enhanced_data: List of assets with technical indicators
@@ -718,6 +713,8 @@ def build_comprehensive_ai_prompt(
         budget: Available trading budget
         market_context: Market timing and regional information
         ai_engines: List of AI engines being used
+        min_profit_target: User's minimum profit target percentage
+        target_desc: User-friendly description of the profit target
         
     Returns:
         Formatted prompt string for AI analysis
@@ -743,8 +740,8 @@ def build_comprehensive_ai_prompt(
         volume = asset.get("volume", 0)
         technical = asset.get("technical", {})
         
-        # Calculate profit potential using technical indicators
-        profit_analysis = calculate_profit_potential(technical, price, category)
+        # Calculate profit potential using user's target
+        profit_analysis = calculate_profit_potential(technical, price, category, min_profit_target)
         
         # Build comprehensive technical summary
         tech_summary = []
@@ -783,7 +780,7 @@ MARKET SENTIMENT ANALYSIS:
     # AI engine context for the prompt
     ai_context = f"AI Engine: {' + '.join(ai_engines)} Analysis" if ai_engines else "Technical Analysis"
     
-    # Build the comprehensive prompt
+    # Build the comprehensive prompt with user's profit target
     prompt = f"""
 You are an elite {ai_context} system. Your task: Find the TOP trading opportunities for SAME-DAY profit in {category.upper()}.
 
@@ -791,7 +788,7 @@ You are an elite {ai_context} system. Your task: Find the TOP trading opportunit
 
 TRADING PARAMETERS:
 • Budget: ${budget:,.2f}
-• Target: MINIMUM 3-5% profit potential
+• Target: MINIMUM {min_profit_target}% profit potential ({target_desc})
 • Strategy: Same-day buy/sell (intraday)
 • Risk: Maximum 2% account risk per trade
 
@@ -801,12 +798,12 @@ ASSET UNIVERSE ({len(enhanced_data)} assets analyzed):
 {sentiment_context}
 
 ANALYSIS REQUIREMENTS:
-1. Identify TOP 3 opportunities with HIGHEST probability of 3-5%+ gains TODAY
+1. Identify TOP 3 opportunities with HIGHEST probability of {min_profit_target}%+ gains TODAY
 2. Rank by: Probability of success × Profit potential × Technical strength
 3. For each recommendation provide:
    - Confidence score (0-100%)
    - Entry price and optimal timing
-   - Conservative target (3-5% range)
+   - Conservative target ({min_profit_target}%+ range)
    - Aggressive target (if technical support higher gains)
    - Stop loss level (based on volatility)
    - Position size within budget
@@ -821,6 +818,8 @@ RESPONSE FORMAT (JSON):
 {{
   "analysis_engine": "{ai_context}",
   "market_outlook": "Brief assessment of {category} market conditions today",
+  "profit_target": "{target_desc}",
+  "minimum_target_pct": {min_profit_target},
   "top_opportunities": [
     {{
       "rank": 1,
@@ -834,8 +833,7 @@ RESPONSE FORMAT (JSON):
       "position_value": 0.00,
       "expected_profit_conservative": 0.00,
       "expected_profit_aggressive": 0.00,
-      "probability_3pct": 85,
-      "probability_5pct": 65,
+      "probability_target": 85,
       "holding_time": "2-4 hours",
       "exit_timing": "Before 15:30",
       "technical_reasons": ["Strong RSI divergence", "MACD bullish crossover", "High volume confirmation"],
@@ -846,7 +844,7 @@ RESPONSE FORMAT (JSON):
   "market_timing_notes": "Optimal execution windows for {category}"
 }}
 
-Focus on ACTIONABLE opportunities with high probability of achieving our 3-5% minimum target.
+Focus on ACTIONABLE opportunities with high probability of achieving the {min_profit_target}% minimum target.
 """
     
     return prompt
@@ -955,6 +953,63 @@ def get_complete_feature_configuration() -> Dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Disclaimer and Information Display
+# ────────────────────────────────────────────────────────────────────────────
+
+def show_enhanced_disclaimer() -> None:
+    """
+    Display enhanced disclaimer with AI capabilities and user profit target information.
+    
+    This function provides comprehensive information about the system's capabilities,
+    limitations, and the user's responsibility in setting appropriate profit targets.
+    """
+    print("\n" + "─" * 80)
+    print("⚠️  ENHANCED TRADING ASSISTANT DISCLAIMER")
+    print("─" * 80)
+    print("🔍 ANALYSIS FEATURES:")
+    print("   • Multi-AI strategy analysis (OpenAI + Anthropic when available)")
+    print("   • 9 technical indicators (RSI, SMA, EMA, MACD, ADX, STOCH, OBV, BBANDS, ATR)")
+    print("   • Universal sentiment analysis across all asset categories")
+    print("   • User-configurable profit targets (1% to 20%+)")
+    print("   • Risk management with dynamic stop-loss calculations")
+    print("   • Market timing awareness (24/7 vs market hours)")
+    print("\n🎯 PROFIT TARGET SELECTION:")
+    print("   • You control the minimum profit target based on your risk tolerance")
+    print("   • Conservative targets have higher probability but lower returns")
+    print("   • Aggressive targets have higher returns but lower probability")
+    print("   • AI analyzes each asset's volatility to validate realistic targets")
+    print("\n⚠️  IMPORTANT DISCLAIMERS:")
+    print("   • This is NOT financial advice - AI provides analysis only")
+    print("   • Past performance does not guarantee future results")
+    print("   • All trading involves substantial risk of loss")
+    print("   • Your profit target selection affects risk/reward balance")
+    print("   • Higher profit targets = higher risk and lower success probability")
+    print("   • Never risk more than you can afford to lose")
+    print("   • Consult qualified financial advisors for investment decisions")
+    print("─" * 80)
+
+
+def _print_diagnostics(category: str) -> None:
+    """
+    Print data source diagnostics for debugging and transparency.
+    
+    This function provides information about data sources and processing
+    for the selected category to help users understand the analysis basis.
+    
+    Args:
+        category: Asset category being analyzed
+    """
+    try:
+        diagnostics = diagnostics_for(category)
+        if diagnostics:
+            print(f"\n🔍 Data Source Information for {category.title()}:")
+            for key, value in diagnostics.items():
+                print(f"   • {key}: {value}")
+    except Exception as e:
+        log.warning(f"Could not display diagnostics: {e}")
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Main Enhanced Workflow Implementation
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -965,12 +1020,13 @@ def run_enhanced_category_workflow() -> None:
     This is the main function that orchestrates the entire trading analysis workflow:
     1. Initialize and validate AI engines
     2. Configure analysis parameters (indicators, sentiment, etc.)
-    3. Collect market data with 2-week history
-    4. Apply technical indicators to historical data
-    5. Gather sentiment data for the category
-    6. Perform AI or rules-based analysis
-    7. Display results with profit targets and risk management
-    8. Log trades for performance tracking
+    3. Get user's profit target selection
+    4. Collect market data with 2-week history
+    5. Apply technical indicators to historical data
+    6. Gather sentiment data for the category
+    7. Perform AI or rules-based analysis with user's profit target
+    8. Display results with profit targets and risk management
+    9. Log trades for performance tracking
     """
     print_header("🤖 AI-Powered Trading Assistant")
     
@@ -980,7 +1036,7 @@ def run_enhanced_category_workflow() -> None:
     print(f"🧠 Strategy Engine: {ai_status['status_message']}")
     if ai_status["ai_available"]:
         print("   ✅ Using artificial intelligence for optimal trade selection")
-        print("   🎯 Target: Find opportunities with 3-5% minimum profit potential")
+        print("   🎯 Target: Find opportunities with user-configurable profit targets")
         if len(ai_status["engines"]) > 1:
             print(f"   🔄 Multi-AI Analysis: {' + '.join(ai_status['engines'])}")
     else:
@@ -1035,20 +1091,31 @@ def run_enhanced_category_workflow() -> None:
     
     print("─" * 50)
     
-    # Step 3: Market and budget selection
+    # Step 3: Category selection first
     category = get_user_choice()
+    
+    # Step 4: Budget selection
     budget = get_user_budget()
     
-    print(f"\n🎯 TARGET: Find {category.upper()} opportunities with 3-5% minimum profit")
-    print(f"💰 BUDGET: ${budget:,.2f}")
+    # Step 5: Profit target selection BEFORE any processing starts
+    from .terminal_ui import get_profit_target_selection
+    min_profit_target, target_desc = get_profit_target_selection()
     
-    # Step 4: Data collection with progress tracking
+    # Display the final configuration
+    print(f"\n🎯 TARGET: Find {category.upper()} opportunities with {target_desc} minimum profit")
+    print(f"💰 BUDGET: ${budget:,.2f}")
+    print(f"📈 MINIMUM PROFIT: {min_profit_target}%")
+    
+    # Now proceed with data collection
+    print(f"\n⏳ Starting analysis for {target_desc} profit target...")
+    
+    # Step 6: Data collection with progress tracking
     pbar = tqdm(total=5, desc="⏳ Processing", unit="step")
     
     # Get market context (handles region selection for region-dependent categories)
     market_ctx = get_market_context_for_category(category)
     
-    # Step 5: Fetch 2-week historical data
+    # Step 7: Fetch 2-week historical data
     pbar.set_description("📊 Fetching 2-week historical data...")
     
     # Map categories to their respective data fetching functions
@@ -1070,7 +1137,7 @@ def run_enhanced_category_workflow() -> None:
     
     try:
         # Fetch market data with historical price data for technical analysis
-        # Note: Removed the problematic crypto-specific import that was causing the error
+        # Note: Using clean data fetching without problematic imports
         if category == "crypto":
             print(f"📊 Using standard crypto data fetching strategy")
             rows = fetch_func(include_history=True)
@@ -1099,22 +1166,22 @@ def run_enhanced_category_workflow() -> None:
         pbar.close()
         return
     
-    # Step 6: Apply technical indicators to the data
+    # Step 8: Apply technical indicators to the data
     pbar.set_description("🧮 Computing technical indicators...")
     enhanced_data = enhance_data_with_indicators(rows, selected_inds)
     pbar.update(1)
     
-    # Step 7: Collect sentiment data for the selected components
+    # Step 9: Collect sentiment data for the selected components
     pbar.set_description("💭 Analyzing market sentiment...")
     sentiment_data = collect_universal_sentiment_data(category, use_sentiment, sentiment_components)
     pbar.update(1)
     
-    # Step 8: Perform AI or rules-based analysis
+    # Step 10: Perform AI or rules-based analysis with user's profit target
     pbar.set_description("🤖 Performing AI analysis for optimal trade selection...")
     
     try:
         if ai_status["ai_available"] and use_ai:
-            # Use AI strategy analysis
+            # Use AI strategy analysis with user's profit target
             print(f"🤖 Using AI analysis with {ai_status['primary_engine']} engine")
             
             # Prepare feature flags for the strategy engine
@@ -1125,9 +1192,10 @@ def run_enhanced_category_workflow() -> None:
                 "selected_indicators": selected_inds,
                 "sentiment_components": sentiment_components,
                 "use_all_features": use_all,
+                "min_profit_target": min_profit_target,  # Pass user's profit target
             }
             
-            # Call analyze_market with proper parameters
+            # Call analyze_market with proper parameters including profit target
             recs = analyze_market(
                 market_data=enhanced_data,
                 budget=budget,
@@ -1139,10 +1207,11 @@ def run_enhanced_category_workflow() -> None:
                 use_sentiment=use_sentiment,
                 market=market_ctx.get("market"),
                 market_context=market_ctx,
-                engine="llm"  # Force LLM for AI analysis
+                engine="llm",  # Force LLM for AI analysis
+                min_profit_target=min_profit_target  # Add profit target parameter
             )
         else:
-            # Use rules-based analysis as fallback
+            # Use rules-based analysis as fallback with profit target
             print("📊 Using technical rules engine for analysis")
             
             # Prepare feature flags for rules engine
@@ -1153,6 +1222,7 @@ def run_enhanced_category_workflow() -> None:
                 "selected_indicators": selected_inds,
                 "sentiment_components": sentiment_components,
                 "use_all_features": use_all,
+                "min_profit_target": min_profit_target,  # Pass user's profit target
             }
             
             # Try to use rules engine if available
@@ -1178,7 +1248,8 @@ def run_enhanced_category_workflow() -> None:
                     use_sentiment=use_sentiment,
                     market=market_ctx.get("market"),
                     market_context=market_ctx,
-                    engine="rules"
+                    engine="rules",
+                    min_profit_target=min_profit_target  # Add profit target parameter
                 )
         
         # Handle tuple returns from some strategy functions
@@ -1193,25 +1264,27 @@ def run_enhanced_category_workflow() -> None:
         pbar.close()
         return
     
-    # Step 9: Display enhanced results
+    # Step 11: Display enhanced results
     pbar.set_description("📊 Preparing results...")
     pbar.update(1)
     pbar.close()
     
-    # Display recommendations with current timestamp
+    # Display recommendations with current timestamp and profit target
     now = datetime.now(LOCAL_TZ)
     print_enhanced_recommendations(
         recs, 
         title=f"🎯 AI Trading Recommendations ({now.strftime('%H:%M %Z')})",
         category=category,
         budget=budget,
-        ai_status=ai_status
+        ai_status=ai_status,
+        min_profit_target=min_profit_target,  # Pass profit target for display
+        target_desc=target_desc
     )
     
     # Show data source diagnostics for debugging
     _print_diagnostics(category)
     
-    # Step 10: Persist results for performance tracking
+    # Step 12: Persist results for performance tracking
     try:
         # Log the trading session for future analysis
         for rec in recs[:3] if recs else []:  # Log top 3 recommendations
@@ -1243,7 +1316,7 @@ def print_enhanced_recommendations(
     
     This function provides a comprehensive display of trading recommendations
     including risk management, position sizing, market timing information,
-    and prominent confidence level display.
+    and prominent confidence level display based on user's profit target.
     """
     
     print_header(title)
@@ -1386,254 +1459,251 @@ def print_enhanced_recommendations(
     
     # Risk management warnings
     print(f"\n⚠️  RISK MANAGEMENT:")
-    print("   • Never risk more than 2% of total portfolio per trade")
-    print("   • Use stop losses to limit downside exposure")
-    print("   • Higher profit targets = higher risk")
-    print("   • Confidence levels help assess probability")
-    print("   • Market conditions can change rapidly")
-    print("   • Past performance doesn't guarantee future results")
-
-
-def show_enhanced_disclaimer() -> None:
-    """Show enhanced disclaimer about data sources and AI capabilities."""
-    print("\n" + "─" * 60)
-    print("📊 AI-POWERED INTRADAY TRADING SYSTEM")
-    print("─" * 60)
-    print("🎯 Goal: Find opportunities with user-selected profit targets")
-    print("📈 Strategy: Same-day buy/sell using 2-week technical analysis")
-    print("🤖 AI Engine: Multi-AI powered decision making")
-    print("⏰ Timing: Crypto (24/7) | Others (Market hours only)")
-    print("🌍 Coverage: All 7 categories with universal sentiment analysis")
-    print("─" * 60)
-    print("⚠️  DISCLAIMER:")
-    print("• For educational/research purposes only")
-    print("• Past performance does not guarantee future results")
-    print("• Always verify with official broker platforms")
-    print("• Never risk more than you can afford to lose")
-    print("• AI recommendations are not financial advice")
-    print("─" * 60)
-
-
-def _print_diagnostics(category: str) -> None:
-    """Print data source diagnostics for debugging purposes."""
-    try:
-        diag = diagnostics_for(category)
-        print_header("Data Source Diagnostics")
-        
-        used = diag.get("used", "None")
-        failed = diag.get("failed", [])
-        skipped = diag.get("skipped", [])
-        
-        if used and used != "None":
-            print(f"✅ Used: {used}")
-        
-        if failed:
-            for f in failed:
-                print(f"❌ Failed: {f}")
-        
-        if skipped:
-            skipped_str = ", ".join(skipped)
-            print(f"⏭️  Skipped: {skipped_str}")
-            
-    except Exception as e:
-        log.warning(f"Could not get diagnostics for {category}: {e}")
-        print(f"⚠️  Diagnostics unavailable: {e}")
+    print("   • Never risk more than 2% of your account per trade")
+    print("   • Markets can be unpredictable - AI analysis is not guaranteed")
+    print("   • Always use stop losses to limit downside risk")
+    print(f"   • Your selected {min_profit_target}% target affects risk/reward balance")
+    print("   • Consider paper trading first to test strategies")
+    print("   • This is educational analysis, not financial advice")
+    
+    # Performance tracking reminder
+    if profitable_recs:
+        print(f"\n📊 PERFORMANCE TRACKING:")
+        print("   • All recommendations logged for future analysis")
+        print("   • Track actual vs predicted outcomes")
+        print("   • Use results to refine future profit targets")
+        print("   • Build confidence through consistent performance measurement")
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Single Asset Analysis Workflow
 # ────────────────────────────────────────────────────────────────────────────
 
-def run_single_asset_flow() -> None:
+def run_single_asset_workflow() -> None:
     """
-    Single-asset analysis workflow for focused analysis of individual symbols.
+    Single asset analysis workflow with user-configurable profit targets.
     
-    This workflow allows users to analyze a specific asset with selected indicators
-    rather than screening entire categories. Useful for:
-    - Analyzing a specific stock, crypto, or forex pair
-    - Testing indicator combinations on known assets
-    - Getting detailed analysis of user's existing positions
+    This function provides detailed analysis for a specific asset chosen by the user,
+    applying the same technical indicators, sentiment analysis, and AI-powered
+    recommendations but focused on a single symbol with user's profit target.
     """
-    print_header("🔍 Single Asset Analysis")
+    print_header("🔍 Single Asset Deep Analysis")
     
-    # Validate startup environment
+    # Get AI engine status
     ai_status = get_ai_engine_status()
+    print(f"🧠 Analysis Engine: {ai_status['status_message']}")
     
-    if ai_status["ai_available"]:
-        print(f"🤖 AI Analysis: {ai_status['status_message']}")
-    else:
-        print("📊 Using Technical Rules Engine")
-    
+    # Show enhanced disclaimer
     show_enhanced_disclaimer()
     
-    # Get user input for single asset analysis
+    # Get single asset input from user
+    asset_input = prompt_single_asset_input()
+    
+    # Get profit target selection
+    from .terminal_ui import get_profit_target_selection
+    min_profit_target, target_desc = get_profit_target_selection()
+    
+    print(f"\n🎯 TARGET: Analyze {asset_input['symbol']} for {target_desc} profit potential")
+    print(f"📊 Asset Class: {asset_input['asset_class']}")
+    print(f"📈 Minimum Profit Target: {min_profit_target}%")
+    
+    # Get complete feature configuration
+    feature_config = get_complete_feature_configuration()
+    
     try:
-        input_data = prompt_single_asset_input()
-    except Exception as e:
-        print(f"❌ Input error: {e}")
-        return
-    
-    symbol = input_data["symbol"]
-    asset_class = input_data["asset_class"]
-    market = input_data.get("market")
-    region = input_data.get("region")
-    indicators = input_data.get("indicators", [])
-    budget = input_data.get("budget", 1000)
-    
-    print(f"\n🎯 Analyzing {symbol} ({asset_class})")
-    if market:
-        print(f"📍 Market: {market}")
-    if region:
-        print(f"🌍 Region: {region}")
-    
-    # Fetch single asset data
-    try:
-        asset_data = fetch_single_symbol_quote(symbol, asset_class)
+        # Fetch single asset data with historical information
+        asset_data = fetch_single_symbol_quote(
+            symbol=asset_input["symbol"],
+            asset_class=asset_input["asset_class"],
+            market=asset_input.get("market"),
+            region=asset_input.get("region"),
+            include_history=True
+        )
+        
         if not asset_data:
-            print(f"\n❌ Could not fetch data for {symbol}")
-            print("💡 Try a different symbol or check your internet connection")
+            print(f"\n❌ Could not fetch data for {asset_input['symbol']}")
             return
-    except Exception as e:
-        log.exception(f"Failed to fetch data for {symbol}")
-        print(f"\n❌ Error fetching {symbol}: {e}")
-        return
-    
-    # Create market context
-    market_ctx = {
-        "category": asset_class,
-        "market": market,
-        "region": region,
-        "timezone": "UTC",
-        "sessions": [],
-        "trading_days": [0, 1, 2, 3, 4],
-    }
-    
-    # Create feature flags based on selected indicators
-    feature_flags = {
-        "use_rsi": "RSI" in indicators,
-        "use_sma": "SMA" in indicators or "EMA" in indicators,
-        "use_sentiment": "sentiment" in [i.lower() for i in indicators],
-        "selected_indicators": indicators,
-        "use_all_features": len(indicators) >= 5,
-    }
-    
-    print(f"\n🔍 Running analysis with {len(indicators)} indicators...")
-    
-    # Analyze single asset
-    try:
-        # Try using the single asset analysis function if available
-        try:
-            from trading_core.strategy.rules_engine import analyze_single_asset
-            recommendation = analyze_single_asset(asset_data, asset_class, market_ctx, feature_flags, budget)
-        except ImportError:
-            # Fallback to general analyze_market function
-            recommendation = analyze_market(
-                market_data=[asset_data],
-                budget=budget,
-                market_type=asset_class,
-                history=[],
-                sentiment=None,
-                use_rsi=feature_flags["use_rsi"],
-                use_sma=feature_flags["use_sma"],
-                use_sentiment=feature_flags["use_sentiment"],
-                market=market,
-                market_context=market_ctx,
-                engine="llm" if ai_status["ai_available"] else "rules"
+        
+        # Apply technical indicators
+        enhanced_data = enhance_data_with_indicators([asset_data], feature_config["selected_indicators"])
+        
+        # Collect sentiment data for the asset class
+        sentiment_data = collect_universal_sentiment_data(
+            asset_input["asset_class"], 
+            feature_config["use_sentiment"], 
+            feature_config.get("sentiment_components", [])
+        )
+        
+        # Perform analysis with user's profit target
+        if ai_status["ai_available"]:
+            # Build comprehensive prompt for single asset
+            prompt = build_comprehensive_ai_prompt(
+                enhanced_data=enhanced_data,
+                sentiment_data=sentiment_data,
+                category=asset_input["asset_class"],
+                budget=10000,  # Default budget for single asset analysis
+                market_context={"market": asset_input.get("market", "Default")},
+                ai_engines=ai_status["engines"],
+                min_profit_target=min_profit_target,
+                target_desc=target_desc
             )
-            # Extract first recommendation if list returned
-            if isinstance(recommendation, list) and recommendation:
-                recommendation = recommendation[0]
-            elif isinstance(recommendation, tuple):
-                recommendation = recommendation[0][0] if recommendation[0] else None
-                
+            
+            # Use AI analysis
+            recs = analyze_market(
+                market_data=enhanced_data,
+                budget=10000,
+                market_type=asset_input["asset_class"],
+                history=[],
+                sentiment=sentiment_data,
+                use_rsi=feature_config["use_rsi"],
+                use_sma=feature_config["use_sma"],
+                use_sentiment=feature_config["use_sentiment"],
+                engine="llm",
+                min_profit_target=min_profit_target
+            )
+        else:
+            # Use rules-based analysis
+            recs = analyze_market(
+                market_data=enhanced_data,
+                budget=10000,
+                market_type=asset_input["asset_class"],
+                history=[],
+                sentiment=sentiment_data,
+                use_rsi=feature_config["use_rsi"],
+                use_sma=feature_config["use_sma"],
+                use_sentiment=feature_config["use_sentiment"],
+                engine="rules",
+                min_profit_target=min_profit_target
+            )
+        
+        # Display single asset results
+        print_single_asset_analysis(
+            asset_data=enhanced_data[0] if enhanced_data else asset_data,
+            recommendations=recs,
+            ai_status=ai_status,
+            min_profit_target=min_profit_target,
+            target_desc=target_desc
+        )
+        
     except Exception as e:
-        log.exception(f"Analysis failed for {symbol}")
+        log.exception("Single asset analysis failed")
         print(f"\n❌ Analysis error: {e}")
-        return
+
+
+def print_single_asset_analysis(
+    asset_data: Dict[str, Any],
+    recommendations: List[Dict[str, Any]],
+    ai_status: Dict[str, Any],
+    min_profit_target: float,
+    target_desc: str
+) -> None:
+    """
+    Display comprehensive single asset analysis results with user's profit target focus.
     
-    # Display results in one-liner format as requested
-    if recommendation:
-        action = recommendation.get("action", "Hold")
-        confidence = recommendation.get("confidence", 0)
-        reasoning = recommendation.get("reasoning", recommendation.get("reasons", "No reasoning provided"))
-        
-        print(f"\n📊 ANALYSIS RESULT:")
-        print(f"[Action: {action} | Confidence: {confidence:.0f}% | Key Reasons: {reasoning}]")
-        
-        # Show additional numeric fields if available
-        if recommendation.get("target_price"):
-            print(f"🎯 Target: ${recommendation['target_price']:.2f}")
-        if recommendation.get("stop_loss"):
-            print(f"🛑 Stop Loss: ${recommendation['stop_loss']:.2f}")
-        if recommendation.get("expected_profit_pct"):
-            print(f"📈 Expected Profit: {recommendation['expected_profit_pct']:.1f}%")
+    This function shows detailed technical analysis, profit potential calculations,
+    and AI recommendations for a single asset based on the user's profit target.
+    """
+    symbol = asset_data.get("symbol", "Unknown")
+    price = asset_data.get("price", 0)
+    technical = asset_data.get("technical", {})
+    
+    print_header(f"📊 {symbol} Deep Analysis - {target_desc} Target")
+    
+    # Show which AI engine was used
+    if ai_status["ai_available"]:
+        print(f"🤖 Analysis by: {' + '.join(ai_status['engines'])}")
     else:
-        print(f"\n📊 No clear signal for {symbol} at this time.")
-        print("💡 Consider waiting for better market conditions or trying different indicators.")
+        print("📊 Analysis by: Technical Rules Engine")
+    
+    print(f"🎯 Profit Target: {target_desc} (min {min_profit_target}%)")
+    
+    # Current market data
+    print(f"\n📈 CURRENT MARKET DATA:")
+    print(f"   💵 Price: ${price:.4f}")
+    print(f"   📊 Volume: ${asset_data.get('volume', 0):,.0f}")
+    print(f"   📅 Last Updated: {datetime.now(LOCAL_TZ).strftime('%H:%M %Z')}")
+    
+    # Technical indicators summary
+    if technical:
+        print(f"\n🧮 TECHNICAL INDICATORS:")
+        if technical.get("rsi"):
+            print(f"   📊 RSI (14): {technical['rsi']:.1f}")
+        if technical.get("sma_fast"):
+            print(f"   📈 SMA (20): ${technical['sma_fast']:.4f}")
+        if technical.get("macd"):
+            print(f"   🌊 MACD: {technical['macd']:.4f}")
+        if technical.get("bb_position"):
+            print(f"   🎯 Bollinger Position: {technical['bb_position']:.2f}")
+        if technical.get("atr_pct"):
+            print(f"   📏 ATR: {technical['atr_pct']:.1f}%")
+    
+    # Profit potential analysis
+    if technical:
+        profit_analysis = calculate_profit_potential(technical, price, "equities", min_profit_target)
+        print(f"\n🎯 PROFIT POTENTIAL ANALYSIS:")
+        print(f"   🎯 Conservative Target: {profit_analysis['conservative_target_pct']:.1f}%")
+        print(f"   🚀 Aggressive Target: {profit_analysis['aggressive_target_pct']:.1f}%")
+        print(f"   🛑 Suggested Stop Loss: {profit_analysis['stop_loss_pct']:.1f}%")
+        print(f"   📊 Volatility: {profit_analysis['volatility_pct']:.1f}%")
+        print(f"   ⚡ Momentum Score: {profit_analysis['momentum_score']:.2f}")
+        print(f"   📈 Trend Score: {profit_analysis['trend_score']:.2f}")
+    
+    # AI recommendations
+    if recommendations:
+        rec = recommendations[0]  # First recommendation
+        print(f"\n🤖 AI RECOMMENDATION:")
+        print(f"   📈 Action: {rec.get('action', 'Hold').upper()}")
+        print(f"   🎲 Confidence: {rec.get('confidence', 0)}%")
+        print(f"   💵 Entry Price: ${rec.get('price', price):.4f}")
+        print(f"   🎯 Target Price: ${rec.get('sell_target', 0):.4f}")
+        print(f"   🛑 Stop Loss: ${rec.get('stop_loss', 0):.4f}")
+        
+        reasons = rec.get("reasons", rec.get("reasoning", "Technical analysis"))
+        print(f"   💭 Reasoning: {reasons}")
+    else:
+        print(f"\n📊 ANALYSIS RESULT:")
+        print(f"   ⚠️  No clear trading opportunity meeting {min_profit_target}% target")
+        print(f"   💡 Consider adjusting profit target or waiting for better conditions")
+    
+    print(f"\n⚠️  Remember: This analysis is for educational purposes only")
+    print(f"   Always do your own research and consider consulting financial advisors")
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Main Entry Point and Dispatch Logic
+# Main Application Entry Point
 # ────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     """
-    Main CLI entrypoint with enhanced AI workflow.
+    Main application entry point with user-configurable profit targets.
     
-    This function serves as the main entry point for the trading assistant CLI.
-    It handles:
-    - Environment validation and setup
-    - Market configuration loading
-    - Mode selection (category vs single asset analysis)
-    - Error handling and graceful shutdown
-    - Performance evaluation from previous sessions
+    This function provides the main menu and routes users to either:
+    1. Category-based analysis workflow (multiple assets)
+    2. Single asset deep analysis workflow
+    
+    Both workflows support user-configurable profit targets from 1% to 20%+.
     """
     try:
-        # Load market configuration for timezone and trading hours
-        try:
-            markets = load_markets_config()
-            if markets:
-                sample_market = list(markets.keys())[0]
-                sample_info = markets[sample_market]
-                print(f"[I] Successfully loaded: {len(markets)} markets from configuration")
-                print(f"[I] Sample market '{sample_market}': {sample_info.get('label', 'Unknown')}")
-            else:
-                print("[W] No markets loaded from configuration")
-        except Exception as e:
-            log.warning("Could not load markets config: %s", e)
-            print(f"[W] Could not load markets config: {e}")
-
-        # Check for previous session and show performance if available
-        try:
-            evaluate_previous_session()
-        except Exception as e:
-            log.warning(f"Could not evaluate previous session: {e}")
-
-        # Main mode selection and workflow dispatch
+        # Display main menu and get user choice
         mode = prompt_main_mode()
         
         if mode == "category":
-            # Run the enhanced category-based analysis workflow
+            # Multi-asset category analysis with user profit target
             run_enhanced_category_workflow()
         elif mode == "single_asset":
-            # Run single asset analysis workflow
-            run_single_asset_flow()
+            # Single asset deep analysis with user profit target
+            run_single_asset_workflow()
         else:
-            print("❌ Unknown mode selected")
+            print("❌ Invalid mode selected")
             return
             
     except KeyboardInterrupt:
-        print("\n\n👋 Thanks for using Trading Assistant!")
-        print("💡 Tip: Run 'make setup-api' to configure APIs for better data coverage")
+        print("\n\n👋 Analysis cancelled by user")
     except Exception as e:
-        log.exception("Unexpected error in main")
+        log.exception("Application error")
         print(f"\n❌ Unexpected error: {e}")
-        print("💡 If this persists, please check the logs or run 'make debug-paths'")
+        print("💡 Please check your configuration and try again")
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# Entry Point
-# ────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     main()
