@@ -1,3 +1,4 @@
+# BE/app_cli/main.py
 """
 Enhanced Trading Assistant with Multi-AI Support and Universal Sentiment Analysis
 
