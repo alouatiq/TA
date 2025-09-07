@@ -1485,13 +1485,13 @@ def print_enhanced_recommendations(
     else:
         print("⏰ Exit by: Market close today")
     
-    # Summary section with key metrics
+    # Summary section with key metrics (fixed the old section that was left behind)
     print(f"\n{'='*60}")
     print("📋 TRADING PLAN SUMMARY")
     print(f"{'='*60}")
     print(f"🎯 Total Opportunities: {len(profitable_recs)}")
-    print(f"💰 Total Potential Profit: ${total_potential_profit:.2f}")
-    print(f"📈 Average Expected Return: {(total_potential_profit/budget)*100:.1f}%")
+    print(f"💰 Total Potential Profit: ${total_estimated_profit:.2f}")
+    print(f"📈 Average Expected Return: {(total_estimated_profit/budget)*100:.1f}%")
     print(f"🎯 Profit Target: {target_desc} (min {min_profit_target}%)")
     
     # Market timing reminder based on category
