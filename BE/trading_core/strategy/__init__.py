@@ -25,6 +25,7 @@ Both engines should accept the same kwargs:
     use_sentiment: bool
     market: Optional[str]
     market_context: Dict[str, Any]
+    min_profit_target: float   # User's minimum profit target percentage
 
 Return shape:
     List[dict]  OR  (List[dict], Dict[str, Any])
@@ -124,21 +125,43 @@ def analyze_market(
     market: Optional[str] = None,
     market_context: Optional[Dict[str, Any]] = None,
     engine: EngineName = "auto",
+    min_profit_target: float = 2.0,  # Default 2% minimum profit target
     **kwargs: Any,
 ) -> StrategyOutput:
     """
     Route the request to either rules or LLM strategy based on `engine`.
+    
+    Args:
+        market_data: List of assets with price and technical data
+        budget: Available trading budget
+        market_type: Asset category (crypto, forex, equities, etc.)
+        history: Previous trading session data (optional)
+        sentiment: Market sentiment headlines (optional)
+        use_rsi: Whether to include RSI in analysis
+        use_sma: Whether to include SMA in analysis
+        use_sentiment: Whether to include sentiment in analysis
+        market: Specific market/exchange (optional)
+        market_context: Market timing and regional information
+        engine: Strategy engine to use ("rules", "llm", or "auto")
+        min_profit_target: User's minimum profit target percentage
+        **kwargs: Additional parameters passed to the strategy engine
 
     engine:
       - "rules" → always use deterministic rules engine
       - "llm"   → always use LLM engine (raises if unavailable)
       - "auto"  → pick `default_engine()` at runtime
+      
+    Returns:
+        List of trading recommendations or tuple with additional metadata
     """
     chosen: EngineName
     if engine == "auto":
         chosen = default_engine()
     else:
         chosen = engine
+
+    # Ensure market_context is not None for both engines
+    context = market_context or {}
 
     if chosen == "llm":
         if not engine_available("llm"):
@@ -155,7 +178,8 @@ def analyze_market(
             use_sma=use_sma,
             use_sentiment=use_sentiment,
             market=market,
-            market_context=market_context or {},
+            market_context=context,
+            min_profit_target=min_profit_target,  # Pass user's profit target to LLM engine
             **kwargs,
         )
 
@@ -172,7 +196,8 @@ def analyze_market(
         use_sma=use_sma,
         use_sentiment=use_sentiment,
         market=market,
-        market_context=market_context or {},
+        market_context=context,
+        min_profit_target=min_profit_target,  # Pass user's profit target to rules engine
         **kwargs,
     )
 
