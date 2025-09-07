@@ -1399,7 +1399,7 @@ def show_enhanced_disclaimer() -> None:
     print("\n" + "─" * 60)
     print("📊 AI-POWERED INTRADAY TRADING SYSTEM")
     print("─" * 60)
-    print("🎯 Goal: Find opportunities with 3-5% minimum profit potential")
+    print("🎯 Goal: Find opportunities with user-selected profit targets")
     print("📈 Strategy: Same-day buy/sell using 2-week technical analysis")
     print("🤖 AI Engine: Multi-AI powered decision making")
     print("⏰ Timing: Crypto (24/7) | Others (Market hours only)")
