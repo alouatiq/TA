@@ -1,4 +1,3 @@
-# BE/app_cli/main.py
 """
 Enhanced Trading Assistant with Multi-AI Support and Universal Sentiment Analysis
 
@@ -1451,31 +1450,55 @@ def print_enhanced_recommendations(
     print(f"{'TOTAL':<12} {len(top_opportunities):<6} ${total_allocated:<11.2f}")
     print()
     
-    # Enhanced summary with key metrics
+    # Enhanced summary with better organization and improved icons
     avg_confidence = sum(r.get("confidence", 0) for r in top_opportunities) / len(top_opportunities)
     avg_profit_pct = sum(((r.get("sell_target", 0) - r.get("price", 0)) / r.get("price", 1)) * 100 
                         for r in top_opportunities if r.get("price", 0) > 0) / len(top_opportunities)
     
-    print("📈 TRADING STRATEGY SUMMARY")
-    print("─" * 60)
-    print(f"🎯 Target Profit:          {min_profit_target}% minimum ({target_desc})")
-    print(f"📊 Average Confidence:     {avg_confidence:.1f}%")
-    print(f"💹 Average Expected Profit: {avg_profit_pct:.1f}%")
-    print(f"💰 Total Potential Gain:   ${total_estimated_profit:.2f}")
-    print(f"📈 Portfolio Return:       {(total_estimated_profit/budget)*100:.1f}%")
+    # Use recalculated profit instead of original estimates
+    actual_profit = recalculated_profit if 'recalculated_profit' in locals() else total_estimated_profit
+    actual_portfolio_return = (actual_profit / total_allocated) * 100 if total_allocated > 0 else 0
+    budget_utilization = (total_allocated / budget) * 100
     
-    # Risk warnings based on confidence levels
+    print("📈 TRADING STRATEGY SUMMARY")
+    print("─" * 65)
+    
+    # PROFIT TARGETS & EXPECTATIONS
+    print("🎯 PROFIT TARGETS & EXPECTATIONS")
+    print(f"   Target Profit:          {min_profit_target}% minimum ({target_desc})")
+    print(f"   Average Expected Profit: {avg_profit_pct:.1f}%")
+    print(f"   Average Confidence:     {avg_confidence:.1f}%")
+    print()
+    
+    # CAPITAL ALLOCATION
+    print("💰 CAPITAL ALLOCATION")
+    print(f"   Total Allocated:        ${total_allocated:.2f} ({budget_utilization:.1f}% of budget)")
+    print(f"   Cash Reserve:           ${cash_position:.2f} ({(cash_position/budget)*100:.1f}% of budget)")
+    print()
+    
+    # EXPECTED RETURNS
+    print("📊 EXPECTED RETURNS") 
+    print(f"   Expected Profit:        ${actual_profit:.2f}")
+    print(f"   Portfolio Return:       {actual_portfolio_return:.1f}% (on allocated capital)")
+    print(f"   Total Budget Return:    {(actual_profit/budget)*100:.1f}% (on total budget)")
+    
+    # Risk warnings based on confidence levels and allocation
     print("\n⚠️  RISK ASSESSMENT")
-    print("─" * 40)
+    print("─" * 45)
     if avg_confidence >= 70:
         print("🟢 Overall Risk Level: MODERATE - Good confidence in recommendations")
+        print(f"✅ Recommendation: Deploy {budget_utilization:.0f}% of budget as planned")
     elif avg_confidence >= 50:
         print("🟡 Overall Risk Level: ELEVATED - Mixed confidence levels")
+        print(f"⚠️  Recommendation: Consider reducing positions by 25-50%")
     else:
         print("🔴 Overall Risk Level: HIGH - Low confidence recommendations")
-        print("   Consider reducing position sizes or waiting for better opportunities")
+        print(f"🚨 Recommendation: Very conservative allocation ({budget_utilization:.0f}% deployed)")
+        print("   Consider waiting for better opportunities or reducing positions further")
     
-    print(f"💡 Recommendation: Focus budget on {high_conf_count} high-confidence opportunities")
+    if cash_position > budget * 0.5:
+        print(f"💡 Large cash reserve ({(cash_position/budget)*100:.0f}%) indicates lack of high-quality opportunities")
+    
     print("📱 Monitor positions every 30 minutes and use stop losses")
     
     # Market timing
