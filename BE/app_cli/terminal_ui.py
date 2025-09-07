@@ -3,7 +3,8 @@
 Enhanced Terminal UI layer for the Trading Assistant CLI.
 
 This module handles all user interaction, input validation, and pretty printing.
-It includes enhanced AI selection, sentiment configuration, and technical indicator choices.
+It includes enhanced AI selection, sentiment configuration, technical indicator choices,
+and user-configurable profit targets with confidence level display.
 """
 
 from __future__ import annotations
@@ -90,6 +91,33 @@ def check_api_keys() -> Dict[str, bool]:
         return {}
 
 
+def print_api_status(api_status: Optional[Dict[str, bool]] = None) -> None:
+    """Print API key status with recommendations."""
+    if api_status is None:
+        api_status = check_api_keys()
+    
+    print_header("API Configuration Status")
+    
+    if not api_status:
+        print("⚠️  Could not check API keys (config module unavailable)")
+        return
+    
+    print("📋 API Key Status:")
+    for service, available in api_status.items():
+        status_icon = "✅" if available else "❌"
+        print(f"   {status_icon} {service}: {'Configured' if available else 'Not configured'}")
+    
+    missing_keys = [service for service, available in api_status.items() if not available]
+    
+    if missing_keys:
+        print("\n🔧 To configure missing API keys, run:")
+        print("   make setup-api")
+        print("\n📌 Note: The app will work with limited functionality without API keys,")
+        print("   but you'll get better data coverage with them configured.")
+    else:
+        print("\n✅ All API keys are configured!")
+
+
 def get_available_ai_engines() -> Dict[str, bool]:
     """Get available AI engines with their status using robust detection."""
     try:
@@ -142,31 +170,6 @@ def get_available_ai_engines() -> Dict[str, bool]:
         return {"OpenAI": False, "Anthropic": False}
 
 
-def print_api_status() -> None:
-    """Print API key status with recommendations."""
-    print_header("API Configuration Status")
-    
-    key_status = check_api_keys()
-    if not key_status:
-        print("⚠️  Could not check API keys (config module unavailable)")
-        return
-    
-    print("📋 API Key Status:")
-    for service, available in key_status.items():
-        status_icon = "✅" if available else "❌"
-        print(f"   {status_icon} {service}: {'Configured' if available else 'Not configured'}")
-    
-    missing_keys = [service for service, available in key_status.items() if not available]
-    
-    if missing_keys:
-        print("\n🔧 To configure missing API keys, run:")
-        print("   make setup-api")
-        print("\n📌 Note: The app will work with limited functionality without API keys,")
-        print("   but you'll get better data coverage with them configured.")
-    else:
-        print("\n✅ All API keys are configured!")
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Mode selection (classic 7-category flow vs single-asset)
 # ────────────────────────────────────────────────────────────────────────────
@@ -182,6 +185,103 @@ def prompt_main_mode() -> str:
         if ans == "2":
             return "single_asset"
         print("Please enter 1 or 2.")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Profit Target Selection
+# ────────────────────────────────────────────────────────────────────────────
+
+def get_profit_target_selection() -> Tuple[float, str]:
+    """
+    Ask user to select their profit target with clear options and custom input.
+    
+    Returns:
+        Tuple of (profit_percentage, description)
+    """
+    print(f"\n🎯 PROFIT TARGET CONFIGURATION")
+    print("─" * 40)
+    print("Choose your minimum profit target:")
+    print("  1) Conservative (1-2% minimum) - Lower risk, higher probability")
+    print("  2) Moderate (2-4% minimum) - Balanced risk/reward")
+    print("  3) Aggressive (3-5% minimum) - Higher risk, higher reward")
+    print("  4) Very Aggressive (5%+ minimum) - High risk, high reward")
+    print("  5) Custom target - Set your own percentage")
+    
+    while True:
+        profit_choice = input("Enter choice [1-5]: ").strip()
+        
+        if profit_choice == "1":
+            return 1.0, "Conservative (1-2%)"
+        elif profit_choice == "2":
+            return 2.0, "Moderate (2-4%)"
+        elif profit_choice == "3":
+            return 3.0, "Aggressive (3-5%)"
+        elif profit_choice == "4":
+            return 5.0, "Very Aggressive (5%+)"
+        elif profit_choice == "5":
+            # Custom target selection
+            return get_custom_profit_target()
+        else:
+            print("Please enter a number between 1 and 5.")
+
+
+def get_custom_profit_target() -> Tuple[float, str]:
+    """
+    Get custom profit target from user with validation.
+    
+    Returns:
+        Tuple of (profit_percentage, description)
+    """
+    print("\n🎯 CUSTOM PROFIT TARGET")
+    print("Enter your desired minimum profit percentage:")
+    print("  • Recommended range: 0.5% to 15%")
+    print("  • Conservative: 0.5% - 2%")
+    print("  • Moderate: 2% - 5%")
+    print("  • Aggressive: 5% - 10%")
+    print("  • Very Aggressive: 10%+")
+    
+    while True:
+        try:
+            target_input = input("Enter profit percentage (e.g., 2.5): ").strip()
+            custom_target = float(target_input)
+            
+            # Validate range
+            if custom_target <= 0:
+                print("❌ Profit target must be greater than 0%")
+                continue
+            elif custom_target > 50:
+                print("⚠️  Very high target (>50%)! This may be unrealistic for intraday trading.")
+                confirm = input("Are you sure? [y/N]: ").strip().lower()
+                if confirm not in {"y", "yes"}:
+                    continue
+            elif custom_target > 20:
+                print("⚠️  High target (>20%)! This requires very volatile markets.")
+                confirm = input("Continue with high target? [y/N]: ").strip().lower()
+                if confirm not in {"y", "yes"}:
+                    continue
+            
+            # Clamp to reasonable bounds and create description
+            final_target = max(0.1, min(50.0, custom_target))
+            
+            # Generate risk assessment description
+            if final_target <= 1:
+                risk_level = "Very Conservative"
+            elif final_target <= 2:
+                risk_level = "Conservative"
+            elif final_target <= 5:
+                risk_level = "Moderate"
+            elif final_target <= 10:
+                risk_level = "Aggressive"
+            else:
+                risk_level = "Very Aggressive"
+            
+            description = f"Custom {risk_level} ({final_target}%+)"
+            
+            print(f"✅ Custom profit target set: {final_target}% ({risk_level})")
+            return final_target, description
+            
+        except ValueError:
+            print("❌ Please enter a valid number (e.g., 2.5)")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -249,7 +349,7 @@ def ask_sentiment_components() -> List[str]:
         ("social", "Social Media Sentiment"),
         ("fear_greed", "Fear & Greed Index"),
         ("institutional", "Institutional Sentiment"),
-        ("technical", "Technical Sentiment Indicators"),
+        ("technical_sentiment", "Technical Sentiment Indicators"),
     ]
     
     print("   1. Use ALL sentiment components (Comprehensive analysis)")
@@ -480,25 +580,27 @@ def get_feature_configuration() -> Dict[str, any]:
         ai_engines = [name for name, available in available_ai.items() if available]
         
         selected_indicators = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
-        sentiment_components = ["news", "social", "fear_greed", "institutional", "technical"]
+        sentiment_components = ["news", "social", "fear_greed", "institutional", "technical_sentiment"]
         
         print("🎯 MAXIMUM POWER MODE ACTIVATED!")
-        print("─" * 50)
+        print("─" * 60)
         
         if ai_engines:
-            print(f"🤖 AI Analysis: {' + '.join(ai_engines)} ({'Multi-AI' if len(ai_engines) > 1 else 'Single-AI'})")
+            if len(ai_engines) > 1:
+                print(f"🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI Analysis)")
+            else:
+                print(f"🤖 AI Analysis: {ai_engines[0]} (Single-AI Analysis)")
         else:
             print("🤖 AI Analysis: ❌ Not available")
         
-        print(f"📊 Technical Indicators: ✅ All {len(selected_indicators)} enabled")
-        for ind in selected_indicators:
-            print(f"   • {ind}")
+        print(f"📊 Technical Indicators: ✅ All {len(selected_indicators)}/9 enabled")
+        print("   " + ", ".join(selected_indicators))
         
-        print(f"💭 Sentiment Analysis: ✅ All {len(sentiment_components)} components")
-        for comp in sentiment_components:
-            print(f"   • {comp.replace('_', ' ').title()}")
+        print(f"💭 Sentiment Analysis: ✅ All {len(sentiment_components)}/5 components")
+        print("   " + ", ".join([comp.replace('_', ' ').title() for comp in sentiment_components]))
         
-        print("─" * 50)
+        print("⚡ Analysis Power Level: 100% (Maximum)")
+        print("─" * 60)
         
         return {
             "use_all": True,
@@ -822,80 +924,8 @@ def ask_individual_sentiment_components() -> List[str]:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Updated Enhanced Feature Configuration
+# Updated Enhanced Feature Configuration with AI Status Integration
 # ────────────────────────────────────────────────────────────────────────────
-
-def configure_individual_features() -> Dict[str, any]:
-    """Configure features individually with detailed selection."""
-    print("🔧 CUSTOM CONFIGURATION MODE")
-    print("Configure each component individually:")
-    
-    # Get AI engines selection with status indicators
-    available_ai = get_available_ai_engines()
-    all_ai_options = [
-        ("OpenAI", "OpenAI GPT-4 - Advanced reasoning and analysis"),
-        ("Anthropic", "Anthropic Claude - Nuanced market understanding")
-    ]
-    
-    selected_ai_engines = ask_ai_engines_with_status(all_ai_options, available_ai)
-    
-    # Get technical indicators selection
-    selected_indicators = ask_individual_technical_indicators()
-    
-    # Get sentiment components selection
-    sentiment_components = ask_individual_sentiment_components()
-    
-    # Legacy compatibility flags
-    use_rsi = "RSI" in selected_indicators
-    use_sma = "SMA" in selected_indicators or "EMA" in selected_indicators
-    use_sentiment = len(sentiment_components) > 0
-    use_ai = len(selected_ai_engines) > 0
-    
-    # Show comprehensive summary
-    print("\n" + "─" * 70)
-    print("📋 CUSTOM CONFIGURATION SUMMARY")
-    print("─" * 70)
-    
-    # AI Engines Summary
-    if selected_ai_engines:
-        if len(selected_ai_engines) > 1:
-            print(f"🤖 AI Engines ({len(selected_ai_engines)}): {', '.join(selected_ai_engines)} (Multi-AI Analysis)")
-        else:
-            print(f"🤖 AI Engines: {selected_ai_engines[0]} (Single-AI Analysis)")
-    else:
-        print("🤖 AI Engines: ❌ None selected (Technical analysis only)")
-    
-    # Technical Indicators Summary
-    if selected_indicators:
-        print(f"📊 Technical Indicators ({len(selected_indicators)}/{9}): {', '.join(selected_indicators)}")
-    else:
-        print("📊 Technical Indicators: ❌ None selected")
-    
-    # Sentiment Analysis Summary
-    if sentiment_components:
-        print(f"💭 Sentiment Components ({len(sentiment_components)}/{5}): {', '.join(sentiment_components)}")
-    else:
-        print("💭 Sentiment Components: ❌ None selected")
-    
-    # Power Level Assessment
-    total_possible = 9 + 5 + len([ai for ai, avail in available_ai.items() if avail])
-    total_selected = len(selected_indicators) + len(sentiment_components) + len(selected_ai_engines)
-    power_level = (total_selected / total_possible) * 100 if total_possible > 0 else 0
-    
-    print(f"⚡ Analysis Power Level: {power_level:.0f}% ({total_selected}/{total_possible} components)")
-    print("─" * 70)
-    
-    return {
-        "use_all": False,
-        "use_rsi": use_rsi,
-        "use_sma": use_sma,
-        "use_sentiment": use_sentiment,
-        "use_ai": use_ai,
-        "selected_indicators": selected_indicators,
-        "sentiment_components": sentiment_components,
-        "ai_engines": selected_ai_engines,
-    }
-
 
 def ask_ai_engines_with_status(ai_options: List[Tuple[str, str]], available_status: Dict[str, bool]) -> List[str]:
     """
@@ -977,65 +1007,153 @@ def ask_ai_engines_with_status(ai_options: List[Tuple[str, str]], available_stat
                 print("Please try again or enter 'help' for examples.")
 
 
-def get_feature_configuration() -> Dict[str, any]:
-    """Main function to get complete feature configuration from user."""
-    use_all = ask_use_all_features()
-    
-    if use_all:
-        # All features enabled
-        available_ai = get_available_ai_engines()
-        ai_engines = [name for name, available in available_ai.items() if available]
-        
-        selected_indicators = ["SMA", "EMA", "MACD", "ADX", "RSI", "STOCH", "OBV", "BBANDS", "ATR"]
-        sentiment_components = ["news", "social", "fear_greed", "institutional", "technical_sentiment"]
-        
-        print("🎯 MAXIMUM POWER MODE ACTIVATED!")
-        print("─" * 60)
-        
-        # AI Analysis Status
-        if ai_engines:
-            if len(ai_engines) > 1:
-                print(f"🤖 AI Analysis: {' + '.join(ai_engines)} (Multi-AI Analysis)")
-            else:
-                print(f"🤖 AI Analysis: {ai_engines[0]} (Single-AI Analysis)")
-        else:
-            print("🤖 AI Analysis: ❌ Not available (configure API keys)")
-        
-        # Technical Indicators Status
-        print(f"📊 Technical Indicators: ✅ All {len(selected_indicators)}/9 enabled")
-        print("   " + ", ".join(selected_indicators))
-        
-        # Sentiment Analysis Status
-        print(f"💭 Sentiment Analysis: ✅ All {len(sentiment_components)}/5 components")
-        print("   " + ", ".join([comp.replace('_', ' ').title() for comp in sentiment_components]))
-        
-        print("⚡ Analysis Power Level: 100% (Maximum)")
-        print("─" * 60)
-        
-        return {
-            "use_all": True,
-            "use_rsi": True,
-            "use_sma": True,
-            "use_sentiment": True,
-            "use_ai": len(ai_engines) > 0,
-            "selected_indicators": selected_indicators,
-            "sentiment_components": sentiment_components,
-            "ai_engines": ai_engines,
-        }
-    else:
-        # Individual configuration
-        return configure_individual_features()
-
-
 # ────────────────────────────────────────────────────────────────────────────
-# Helper function for backward compatibility
+# Single Asset Analysis Input
 # ────────────────────────────────────────────────────────────────────────────
 
 def prompt_single_asset_input() -> Dict[str, any]:
-    """Placeholder for single asset input (future implementation)."""
-    return {
-        "symbol": "BTC-USD",
-        "asset_class": "crypto",
-        "budget": 1000.0,
-        "indicators": ["RSI", "SMA", "MACD"],
+    """
+    Get user input for single asset analysis with enhanced validation.
+    
+    Returns:
+        Dictionary with asset analysis parameters
+    """
+    print_header("🔍 Single Asset Analysis Configuration")
+    
+    # Step 1: Get symbol
+    while True:
+        symbol = input("Enter symbol/ticker (e.g., AAPL, BTC, EURUSD): ").strip().upper()
+        if symbol:
+            break
+        print("Please enter a valid symbol.")
+    
+    # Step 2: Get asset class
+    print("\nSelect ASSET CLASS:")
+    print("  1. Cryptocurrencies")
+    print("  2. Forex (FX)")
+    print("  3. Equities / Stocks")
+    print("  4. Commodities")
+    print("  5. Futures")
+    print("  6. Warrants")
+    print("  7. Funds / ETFs")
+    
+    asset_classes = {
+        "1": "crypto", "2": "forex", "3": "equities", 
+        "4": "commodities", "5": "futures", "6": "warrants", "7": "funds"
     }
+    
+    while True:
+        choice = input("Enter number [1-7]: ").strip()
+        if choice in asset_classes:
+            asset_class = asset_classes[choice]
+            break
+        print("Please enter a number between 1 and 7.")
+    
+    # Step 3: Get market/region if needed (for regional assets)
+    market = None
+    region = None
+    
+    if asset_class in ["equities", "commodities", "futures", "warrants", "funds"]:
+        print(f"\n{asset_class.title()} require market selection:")
+        try:
+            market_details = get_market_selection_details()
+            market = market_details.get("market")
+            region = market_details.get("region")
+        except Exception:
+            print("Using default market settings.")
+    
+    # Step 4: Get technical indicators
+    print(f"\nSelect TECHNICAL INDICATORS for {symbol}:")
+    indicators = ask_individual_technical_indicators()
+    
+    # Step 5: Get budget
+    budget = get_user_budget()
+    
+    # Step 6: Get profit target
+    profit_target, target_desc = get_profit_target_selection()
+    
+    # Summary
+    print(f"\n✅ SINGLE ASSET ANALYSIS SUMMARY:")
+    print(f"   🎯 Symbol: {symbol}")
+    print(f"   📊 Asset Class: {asset_class.title()}")
+    if market:
+        print(f"   🏛 Market: {market}")
+    if region:
+        print(f"   🌍 Region: {region}")
+    print(f"   📈 Indicators ({len(indicators)}): {', '.join(indicators) if indicators else 'None'}")
+    print(f"   💰 Budget: ${budget:,.2f}")
+    print(f"   🎯 Profit Target: {target_desc}")
+    
+    return {
+        "symbol": symbol,
+        "asset_class": asset_class,
+        "market": market,
+        "region": region,
+        "indicators": indicators,
+        "budget": budget,
+        "profit_target": profit_target,
+        "target_desc": target_desc,
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Confidence Level Display Helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+def format_confidence_display(confidence: float) -> Tuple[str, str, str]:
+    """
+    Format confidence level with appropriate emoji and description.
+    
+    Args:
+        confidence: Confidence percentage (0-100)
+        
+    Returns:
+        Tuple of (emoji, color_description, text_description)
+    """
+    if confidence >= 85:
+        return "🟢", "Green", "Very High - Strong recommendation"
+    elif confidence >= 70:
+        return "🟡", "Yellow", "High - Good opportunity"
+    elif confidence >= 50:
+        return "🟠", "Orange", "Medium - Consider carefully"
+    else:
+        return "🔴", "Red", "Low - High risk"
+
+
+def print_confidence_summary(recommendations: List[Dict[str, any]]) -> None:
+    """
+    Print a summary of confidence levels across all recommendations.
+    
+    Args:
+        recommendations: List of recommendation dictionaries
+    """
+    if not recommendations:
+        return
+    
+    confidence_levels = {
+        "very_high": 0,  # 85%+
+        "high": 0,       # 70-84%
+        "medium": 0,     # 50-69%
+        "low": 0         # <50%
+    }
+    
+    for rec in recommendations:
+        confidence = rec.get("confidence", 0)
+        if confidence >= 85:
+            confidence_levels["very_high"] += 1
+        elif confidence >= 70:
+            confidence_levels["high"] += 1
+        elif confidence >= 50:
+            confidence_levels["medium"] += 1
+        else:
+            confidence_levels["low"] += 1
+    
+    print(f"\n📊 CONFIDENCE LEVEL BREAKDOWN:")
+    if confidence_levels["very_high"]:
+        print(f"   🟢 Very High (85%+): {confidence_levels['very_high']} opportunities")
+    if confidence_levels["high"]:
+        print(f"   🟡 High (70-84%): {confidence_levels['high']} opportunities")
+    if confidence_levels["medium"]:
+        print(f"   🟠 Medium (50-69%): {confidence_levels['medium']} opportunities")
+    if confidence_levels["low"]:
+        print(f"   🔴 Low (<50%): {confidence_levels['low']} opportunities")
