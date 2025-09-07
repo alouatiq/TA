@@ -1313,11 +1313,12 @@ def print_enhanced_recommendations(
     target_desc: str = "Moderate (2-4%)"
 ) -> None:
     """
-    Enhanced recommendation display with profit targets, confidence levels, and AI insights.
+    Enhanced recommendation display with table format, confidence-based budget allocation, and comprehensive analysis.
     
-    This function provides a comprehensive display of trading recommendations
-    including risk management, position sizing, market timing information,
-    and prominent confidence level display based on user's profit target.
+    This function displays:
+    1. Top 5 opportunities in a clean table format
+    2. Budget allocation table based on confidence levels
+    3. Summary statistics and risk management information
     """
     
     print_header(title)
@@ -1331,40 +1332,44 @@ def print_enhanced_recommendations(
     else:
         print("📊 Analysis performed by: Technical Rules Engine")
     
-    print(f"🎯 Profit Target: {target_desc}")
-    print(f"📊 Minimum Expected Return: {min_profit_target}%")
+    print(f"🎯 Profit Target: {target_desc} | Budget: ${budget:,.2f} | Market: {category.title()}")
     
     if not recs:
-        print(f"\n❌ No trading opportunities found matching our criteria.")
-        print(f"💡 Try lowering the profit target to {max(0.5, min_profit_target - 1)}% or check different market categories.")
+        print(f"\n❌ No trading opportunities found matching {min_profit_target}% minimum profit target")
+        print(f"💡 Consider lowering target to {max(0.5, min_profit_target - 1)}% or try different categories")
         return
     
-    # Filter and sort by profitability and confidence
+    # Filter and sort recommendations
     profitable_recs = [r for r in recs if r.get("action") in ["Buy", "Sell"]]
     
     if not profitable_recs:
-        print(f"\n📊 No high-confidence opportunities meeting {min_profit_target}% minimum profit target.")
-        print(f"💡 Market conditions may not be optimal for intraday trading today.")
-        print(f"🔄 Consider lowering target to {max(0.5, min_profit_target - 1)}% or checking other categories.")
+        print(f"\n📊 No opportunities meeting {min_profit_target}% minimum profit requirement")
+        print(f"🔄 Try adjusting profit target or check market conditions")
         return
     
     # Sort by confidence and expected profit
     profitable_recs.sort(key=lambda x: (x.get("confidence", 0), x.get("estimated_profit", 0)), reverse=True)
     
-    print(f"🎯 Found {len(profitable_recs)} opportunities meeting our criteria:")
-    print(f"💰 Budget Available: ${budget:,.2f}")
-    print(f"🕐 Market Type: {category.title()} ({'24/7' if category == 'crypto' else 'Market Hours Only'})")
+    # Take top 5 opportunities
+    top_opportunities = profitable_recs[:5]
     
-    total_potential_profit = 0
+    print(f"\n📊 TOP 5 TRADING OPPORTUNITIES")
+    print("─" * 120)
     
-    # Display top 3 opportunities with detailed analysis and prominent confidence levels
-    for i, rec in enumerate(profitable_recs[:3], 1):
-        asset = rec.get("asset", rec.get("symbol", "Unknown"))
+    # Table header
+    print(f"{'Rank':<4} {'Asset':<20} {'Price':<10} {'Target':<10} {'Profit%':<8} {'Confidence':<12} {'Est.Gain':<10} {'Action':<6}")
+    print("─" * 120)
+    
+    # Table rows
+    total_estimated_profit = 0
+    confidence_buckets = {"High": [], "Medium": [], "Low": []}
+    
+    for i, rec in enumerate(top_opportunities, 1):
+        asset = rec.get("asset", rec.get("symbol", "Unknown"))[:18]  # Truncate long names
         action = rec.get("action", "Hold")
         confidence = rec.get("confidence", 0)
         entry_price = rec.get("price", rec.get("entry_price", 0))
         target_price = rec.get("sell_target", rec.get("target_price", 0))
-        stop_loss = rec.get("stop_loss", 0)
         estimated_profit = rec.get("estimated_profit", 0)
         
         # Calculate profit percentage
@@ -1373,64 +1378,112 @@ def print_enhanced_recommendations(
         else:
             profit_pct = 0
         
-        print(f"\n🏆 OPPORTUNITY #{i} - {asset}")
-        print("─" * 50)
-        print(f"📈 Action: {action.upper()}")
-        
-        # Prominent confidence level display with color coding
-        confidence_emoji = ""
-        if confidence >= 85:
-            confidence_emoji = "🟢"  # High confidence
-        elif confidence >= 70:
-            confidence_emoji = "🟡"  # Medium confidence
+        # Confidence emoji
+        if confidence >= 70:
+            conf_emoji = "🟢 High"
+            confidence_buckets["High"].append(rec)
         elif confidence >= 50:
-            confidence_emoji = "🟠"  # Low-medium confidence
+            conf_emoji = "🟡 Med"
+            confidence_buckets["Medium"].append(rec)
         else:
-            confidence_emoji = "🔴"  # Low confidence
-            
-        print(f"🎲 {confidence_emoji} AI CONFIDENCE: {confidence}%")
+            conf_emoji = "🔴 Low"
+            confidence_buckets["Low"].append(rec)
         
-        # Add confidence interpretation
-        if confidence >= 85:
-            conf_text = "Very High - Strong recommendation"
-        elif confidence >= 70:
-            conf_text = "High - Good opportunity"
-        elif confidence >= 50:
-            conf_text = "Medium - Consider carefully"
-        else:
-            conf_text = "Low - High risk"
-        print(f"   └─ Level: {conf_text}")
-        
-        print(f"💵 Entry Price: ${entry_price:.4f}")
-        print(f"🎯 Target Price: ${target_price:.4f}")
-        print(f"🛑 Stop Loss: ${stop_loss:.4f}")
-        print(f"📊 Expected Profit: {profit_pct:.1f}%")
-        print(f"💰 Estimated Gain: ${estimated_profit:.2f}")
-        
-        # Calculate position size within budget constraints
-        max_shares = int(budget * 0.9 / entry_price) if entry_price > 0 else 0
-        position_value = max_shares * entry_price
-        
-        print(f"📦 Suggested Position: {max_shares:,} shares")
-        print(f"💎 Position Value: ${position_value:,.2f}")
-        
-        # Risk analysis and management
-        if stop_loss > 0 and entry_price > 0:
-            risk_pct = abs((stop_loss - entry_price) / entry_price) * 100
-            max_loss = max_shares * abs(stop_loss - entry_price)
-            print(f"⚠️  Maximum Risk: {risk_pct:.1f}% (${max_loss:.2f})")
-        
-        # Market timing information
-        if category == "crypto":
-            print("⏰ Timing: Execute within next 6 hours (24/7 market)")
-        else:
-            print("⏰ Timing: Execute during market hours today")
-        
-        # AI reasoning and technical justification
-        reasons = rec.get("reasons", rec.get("reasoning", "Technical analysis indicates favorable conditions"))
-        print(f"🤖 AI Analysis: {reasons[:100]}...")
-        
-        total_potential_profit += estimated_profit
+        print(f"{i:<4} {asset:<20} ${entry_price:<9.4f} ${target_price:<9.4f} {profit_pct:<7.1f}% {conf_emoji:<12} ${estimated_profit:<9.2f} {action:<6}")
+        total_estimated_profit += estimated_profit
+    
+    print("─" * 120)
+    print(f"{'TOTAL':<56} {'':<8} {'':<12} ${total_estimated_profit:<9.2f}")
+    print()
+    
+    # Budget allocation table based on confidence levels
+    print("💰 BUDGET ALLOCATION BY CONFIDENCE LEVEL")
+    print("─" * 80)
+    
+    # Calculate budget splits
+    high_conf_count = len(confidence_buckets["High"])
+    med_conf_count = len(confidence_buckets["Medium"])
+    low_conf_count = len(confidence_buckets["Low"])
+    
+    # Allocation strategy: 60% to high confidence, 30% to medium, 10% to low
+    high_budget = budget * 0.60 if high_conf_count > 0 else 0
+    med_budget = budget * 0.30 if med_conf_count > 0 else 0
+    low_budget = budget * 0.10 if low_conf_count > 0 else 0
+    
+    # Redistribute unused budget
+    unused_budget = budget - (high_budget + med_budget + low_budget)
+    if unused_budget > 0:
+        if high_conf_count > 0:
+            high_budget += unused_budget * 0.7
+            if med_conf_count > 0:
+                med_budget += unused_budget * 0.3
+            else:
+                high_budget += unused_budget * 0.3
+        elif med_conf_count > 0:
+            med_budget += unused_budget
+    
+    print(f"{'Level':<12} {'Count':<6} {'Budget':<12} {'Per Asset':<12} {'Est. Shares':<12}")
+    print("─" * 80)
+    
+    # High confidence allocation
+    if high_conf_count > 0:
+        per_asset_high = high_budget / high_conf_count
+        avg_price_high = sum(r.get("price", 0) for r in confidence_buckets["High"]) / high_conf_count
+        est_shares_high = int(per_asset_high / avg_price_high) if avg_price_high > 0 else 0
+        print(f"{'🟢 High (70%+)':<12} {high_conf_count:<6} ${high_budget:<11.2f} ${per_asset_high:<11.2f} {est_shares_high:<12,}")
+    
+    # Medium confidence allocation
+    if med_conf_count > 0:
+        per_asset_med = med_budget / med_conf_count
+        avg_price_med = sum(r.get("price", 0) for r in confidence_buckets["Medium"]) / med_conf_count
+        est_shares_med = int(per_asset_med / avg_price_med) if avg_price_med > 0 else 0
+        print(f"{'🟡 Medium (50-69%)':<12} {med_conf_count:<6} ${med_budget:<11.2f} ${per_asset_med:<11.2f} {est_shares_med:<12,}")
+    
+    # Low confidence allocation
+    if low_conf_count > 0:
+        per_asset_low = low_budget / low_conf_count
+        avg_price_low = sum(r.get("price", 0) for r in confidence_buckets["Low"]) / low_conf_count
+        est_shares_low = int(per_asset_low / avg_price_low) if avg_price_low > 0 else 0
+        print(f"{'🔴 Low (<50%)':<12} {low_conf_count:<6} ${low_budget:<11.2f} ${per_asset_low:<11.2f} {est_shares_low:<12,}")
+    
+    print("─" * 80)
+    total_allocated = high_budget + med_budget + low_budget
+    print(f"{'TOTAL':<12} {len(top_opportunities):<6} ${total_allocated:<11.2f}")
+    print()
+    
+    # Enhanced summary with key metrics
+    avg_confidence = sum(r.get("confidence", 0) for r in top_opportunities) / len(top_opportunities)
+    avg_profit_pct = sum(((r.get("sell_target", 0) - r.get("price", 0)) / r.get("price", 1)) * 100 
+                        for r in top_opportunities if r.get("price", 0) > 0) / len(top_opportunities)
+    
+    print("📈 TRADING STRATEGY SUMMARY")
+    print("─" * 60)
+    print(f"🎯 Target Profit:          {min_profit_target}% minimum ({target_desc})")
+    print(f"📊 Average Confidence:     {avg_confidence:.1f}%")
+    print(f"💹 Average Expected Profit: {avg_profit_pct:.1f}%")
+    print(f"💰 Total Potential Gain:   ${total_estimated_profit:.2f}")
+    print(f"📈 Portfolio Return:       {(total_estimated_profit/budget)*100:.1f}%")
+    
+    # Risk warnings based on confidence levels
+    print("\n⚠️  RISK ASSESSMENT")
+    print("─" * 40)
+    if avg_confidence >= 70:
+        print("🟢 Overall Risk Level: MODERATE - Good confidence in recommendations")
+    elif avg_confidence >= 50:
+        print("🟡 Overall Risk Level: ELEVATED - Mixed confidence levels")
+    else:
+        print("🔴 Overall Risk Level: HIGH - Low confidence recommendations")
+        print("   Consider reducing position sizes or waiting for better opportunities")
+    
+    print(f"💡 Recommendation: Focus budget on {high_conf_count} high-confidence opportunities")
+    print("📱 Monitor positions every 30 minutes and use stop losses")
+    
+    # Market timing
+    if category == "crypto":
+        exit_deadline = datetime.now(LOCAL_TZ) + timedelta(hours=6)
+        print(f"⏰ Exit by: {exit_deadline.strftime('%H:%M %Z')} (6 hours from now)")
+    else:
+        print("⏰ Exit by: Market close today")
     
     # Summary section with key metrics
     print(f"\n{'='*60}")
